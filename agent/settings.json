@@ -1,0 +1,11 @@
+{
+  "lastChangelogVersion": "0.78.1",
+  "defaultProvider": "kimi-coding",
+  "defaultModel": "kimi-for-coding",
+  "packages": [
+    "npm:pi-subagents",
+    "npm:pi-intercom",
+    "npm:pi-web-access"
+  ],
+  "theme": "github-light"
+}

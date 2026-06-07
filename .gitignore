@@ -1,0 +1,6 @@
+auth.json
+sessions
+memory
+run-history.jsonl
+web-search.json
+*.log
