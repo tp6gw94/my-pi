@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NAME="${1:-}"
+NAME=""
+if [[ "${1:-}" == "--name" ]]; then
+  NAME="${2:-}"
+  shift 2
+elif [[ -n "${1:-}" ]]; then
+  NAME="$1"
+  shift
+fi
+
 if [[ -z "$NAME" ]]; then
   NAME="pi-$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 4)"
 fi
@@ -23,5 +31,5 @@ rsync -avh --progress \
   $HOME/.pi/agent/ \
   $SANDBOX_HOME/.pi/agent/
 
-sbx run --kit $HOME/.pi/docker-pi-kit/kit pi --name "$NAME"
+sbx run --kit $HOME/.pi/docker-pi-kit/kit --name "$NAME" pi
 
