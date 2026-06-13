@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CTX=$(mktemp -d)
+
+docker build -f "${SCRIPT_DIR}/Dockerfile" -t pi-sandbox:v1 "${CTX}"
+
+rm -rf "${CTX}"

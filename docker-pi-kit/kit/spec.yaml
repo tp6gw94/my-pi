@@ -1,0 +1,76 @@
+schemaVersion: "1"
+kind: agent
+name: pi
+displayName: pi
+
+agent:
+  image: "pi-sandbox:v1"
+  aiFilename: AGENT.md
+  entrypoint:
+    run: [pi]
+
+network:
+  allowedDomains:
+    - api.exa.ai
+    - api.figma.com
+    - api.deepseek.com
+    - api.kimi.com
+    - "*"
+  serviceDomains:
+    api.exa.ai: exa
+    api.figma.com: figma
+    api.deepseek.com: deepseek
+    api.kimi.com: kimi
+  serviceAuth:
+    exa:
+      headerName: x-api-key
+      valueFormat: "%s"
+    figma:
+      headerName: X-Figma-Token
+      valueFormat: "%s"
+    deepseek:
+      headerName: Authorization
+      valueFormat: "Bearer %s"
+    kimi:
+      headerName: x-api-key
+      valueFormat: "%s"
+
+credentials:
+  sources:
+    exa:
+      env:
+        - EXA_API_KEY
+    figma:
+      env:
+        - FIGMA_API_KEY
+    deepseek:
+      env:
+        - DEEPSEEK_API_KEY
+    kimi:
+      env:
+        - KIMI_API_KEY
+
+environment:
+  proxyManaged:
+    - EXA_API_KEY
+    - FIGMA_API_KEY
+    - DEEPSEEK_API_KEY
+    - KIMI_API_KEY
+  variables:
+    CMUX_NOTIFY_URL: http://host.docker.internal:17363/notify
+    PNPM_HOME: /home/agent/.local/share/pnpm
+    PATH: /home/agent/.local/bin:/home/agent/.local/share/pnpm:/usr/local/share/npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    SBX_NO_TELEMETRY: "1"
+
+# commands:
+#   install:
+#     - command: |
+#         cd /home/agent/.pi/agent/npm && npm install
+#       user: "1000"
+#       description: "Install pi extension dependencies"
+
+# memory: |
+#   You are running inside a Docker AI Sandbox.
+#   The pi coding agent is available as `pi`.
+#   Global skills are located under `~/.pi/agent/skills/` and `~/.agents/skills/`.
+#   API keys are injected via environment variables (KIMI_API_KEY, DEEPSEEK_API_KEY, EXA_API_KEY).

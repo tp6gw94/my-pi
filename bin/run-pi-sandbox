@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NAME="${1:-}"
+if [[ -z "$NAME" ]]; then
+  NAME="pi-$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 4)"
+fi
+
+SANDBOX_HOME="$HOME/.pi/docker-pi-kit/kit/files/home"
+
+rsync -avh --progress $HOME/.agents/skills/ $SANDBOX_HOME/.agents/skills/
+
+rsync -avh --progress \
+  --exclude='npm/node_modules' \
+  --exclude='intercom/' \
+  --exclude='sessions/' \
+  --exclude='auth.json' \
+  --exclude='trust.json' \
+  --exclude='run-history.jsonl' \
+  --exclude='mcp-*.json' \
+  --exclude='skills/' \
+  --exclude='*.log' \
+  $HOME/.pi/agent/ \
+  $SANDBOX_HOME/.pi/agent/
+
+sbx run --kit $HOME/.pi/docker-pi-kit/kit pi --name "$NAME"
+

@@ -1,11 +1,21 @@
 {
-  "lastChangelogVersion": "0.78.1",
+  "lastChangelogVersion": "0.79.1",
   "defaultProvider": "kimi-coding",
   "defaultModel": "kimi-for-coding",
   "packages": [
     "npm:pi-subagents",
     "npm:pi-intercom",
-    "npm:pi-web-access"
+    "npm:pi-web-access",
+    "npm:pi-mcp-adapter"
   ],
-  "theme": "github-light"
+  "theme": "github-light",
+  "defaultThinkingLevel": "high",
+  "subagents": {
+    "agentOverrides": {
+      "worker": {
+        "model": "deepseek/deepseek-v4-flash",
+        "thinking": "medium"
+      }
+    }
+  }
 }

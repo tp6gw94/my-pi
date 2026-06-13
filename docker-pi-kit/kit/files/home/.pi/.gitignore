@@ -1,0 +1,9 @@
+auth.json
+sessions
+skills
+memory
+node_modules
+memory
+run-history.jsonl
+web-search.json
+*.log

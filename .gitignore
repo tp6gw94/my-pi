@@ -1,6 +1,16 @@
 auth.json
+exa-usage.json
+mcp-*.json
+trust.json
 sessions
+skills
+memory
+node_modules
+docker-pi-kit/kit/files/home/.pi/agent
+docker-pi-kit/kit/files/home/.agents
 memory
 run-history.jsonl
 web-search.json
+intercom
 *.log
+*.tar
