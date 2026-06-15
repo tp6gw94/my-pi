@@ -14,7 +14,8 @@ if [[ -z "$NAME" ]]; then
   NAME="pi-$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 4)"
 fi
 
-SANDBOX_HOME="$HOME/.pi/docker-pi-kit/kit/files/home"
+KIT="$HOME/.pi/docker-pi-kit/kit"
+SANDBOX_HOME="$KIT/files/home"
 
 rsync -avh --progress $HOME/.agents/skills/ $SANDBOX_HOME/.agents/skills/
 
@@ -31,5 +32,11 @@ rsync -avh --progress \
   $HOME/.pi/agent/ \
   $SANDBOX_HOME/.pi/agent/
 
-sbx run --kit $HOME/.pi/docker-pi-kit/kit --name "$NAME" pi
+if sbx ls --quiet 2>/dev/null | grep -qx "$NAME"; then
+  echo "Attaching to existing sandbox: $NAME"
+  sbx run "$NAME" --kit "$KIT"
+else
+  echo "Creating new sandbox: $NAME"
+  sbx run --kit "$KIT" --name "$NAME" pi
+fi
 
