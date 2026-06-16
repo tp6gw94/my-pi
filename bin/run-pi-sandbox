@@ -17,7 +17,7 @@ fi
 KIT="$HOME/.pi/docker-pi-kit/kit"
 SANDBOX_HOME="$KIT/files/home"
 
-rsync -avh --progress $HOME/.agents/skills/ $SANDBOX_HOME/.agents/skills/
+rsync -avh --copy-unsafe-links --progress $HOME/.agents/skills/ $SANDBOX_HOME/.agents/skills/
 
 rsync -avh --progress \
   --exclude='npm/node_modules' \
