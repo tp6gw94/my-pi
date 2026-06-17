@@ -1,12 +1,13 @@
 {
-  "lastChangelogVersion": "0.79.4",
+  "lastChangelogVersion": "0.79.6",
   "defaultProvider": "kimi-coding",
   "defaultModel": "kimi-for-coding",
   "packages": [
     "npm:pi-subagents",
     "npm:pi-intercom",
     "npm:pi-web-access",
-    "npm:pi-mcp-adapter"
+    "npm:pi-mcp-adapter",
+    "git:github.com/DietrichGebert/ponytail"
   ],
   "theme": "github-light",
   "defaultThinkingLevel": "high",
