@@ -34,6 +34,16 @@ network:
     kimi:
       headerName: x-api-key
       valueFormat: "%s"
+  publishedPorts:
+    - container: 3000
+      protocol: tcp
+      name: nextjs-dev
+    - container: 5173
+      protocol: tcp
+      name: vite-dev
+    - container: 8080
+      protocol: tcp
+      name: app-server
 
 credentials:
   sources:
@@ -61,16 +71,3 @@ environment:
     PNPM_HOME: /home/agent/.local/share/pnpm
     PATH: /home/agent/.local/bin:/home/agent/.local/share/pnpm:/usr/local/share/npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     SBX_NO_TELEMETRY: "1"
-
-# commands:
-#   install:
-#     - command: |
-#         cd /home/agent/.pi/agent/npm && npm install
-#       user: "1000"
-#       description: "Install pi extension dependencies"
-
-# memory: |
-#   You are running inside a Docker AI Sandbox.
-#   The pi coding agent is available as `pi`.
-#   Global skills are located under `~/.pi/agent/skills/` and `~/.agents/skills/`.
-#   API keys are injected via environment variables (KIMI_API_KEY, DEEPSEEK_API_KEY, EXA_API_KEY).

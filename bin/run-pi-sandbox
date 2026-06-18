@@ -2,13 +2,32 @@
 set -euo pipefail
 
 NAME=""
-if [[ "${1:-}" == "--name" ]]; then
-  NAME="${2:-}"
-  shift 2
-elif [[ -n "${1:-}" ]]; then
-  NAME="$1"
-  shift
-fi
+PASS_THROUGH_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+    --name)
+      NAME="${2:-}"
+      shift 2
+      ;;
+    --)
+      shift
+      PASS_THROUGH_ARGS=("$@")
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -z "$NAME" ]]; then
+        NAME="$1"
+      else
+        PASS_THROUGH_ARGS+=("$1")
+      fi
+      shift
+      ;;
+  esac
+done
 
 if [[ -z "$NAME" ]]; then
   NAME="pi-$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 4)"
@@ -21,22 +40,79 @@ rsync -avh --copy-unsafe-links --progress $HOME/.agents/skills/ $SANDBOX_HOME/.a
 
 rsync -avh --progress \
   --exclude='npm/node_modules' \
+  --exclude='git' \
   --exclude='intercom/' \
   --exclude='sessions/' \
+  --exclude='skills/' \
   --exclude='auth.json' \
   --exclude='trust.json' \
   --exclude='run-history.jsonl' \
   --exclude='mcp-*.json' \
-  --exclude='skills/' \
   --exclude='*.log' \
-  $HOME/.pi/agent/ \
-  $SANDBOX_HOME/.pi/agent/
+  "$HOME/.pi/agent/" \
+  "$SANDBOX_HOME/.pi/agent/"
+
+CMUX_WORKSPACE_ID="${CMUX_WORKSPACE_ID:-}"
+CMUX_SURFACE_ID="${CMUX_SURFACE_ID:-}"
+CMUX_TAB_ID="${CMUX_TAB_ID:-}"
+
+if command -v cmux >/dev/null 2>&1; then
+  CMUX_IDENTIFY=$(cmux identify --json 2>/dev/null || echo '{}')
+  if [[ -n "$CMUX_IDENTIFY" && "$CMUX_IDENTIFY" != '{}' ]]; then
+    read -r CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID < <(
+      echo "$CMUX_IDENTIFY" | python3 -c 'import json,sys; c=json.load(sys.stdin).get("caller",{}); print(c.get("workspace_ref",""), c.get("surface_ref",""), c.get("tab_ref",""))' 2>/dev/null || echo "$CMUX_WORKSPACE_ID $CMUX_SURFACE_ID $CMUX_TAB_ID"
+    )
+  fi
+fi
+
+# Ensure the host-side cmux notify bridge is running.
+if command -v node >/dev/null 2>&1 && [[ -f "$HOME/.pi/bin/cmux-notify-bridge.mjs" ]]; then
+  BRIDGE_URL="http://127.0.0.1:17363/health"
+  if ! curl -s --connect-timeout 1 "$BRIDGE_URL" >/dev/null 2>&1; then
+    echo "Starting cmux notify bridge on 127.0.0.1:17363"
+    node "$HOME/.pi/bin/cmux-notify-bridge.mjs" >/dev/null 2>&1 &
+    # Wait for the bridge to come up.
+    for _ in {1..20}; do
+      if curl -s --connect-timeout 1 "$BRIDGE_URL" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.2
+    done
+  fi
+fi
+
+# sbx does not forward arbitrary host env vars, so we rewrite the spec
+# variables in a temporary kit directory.
+KIT_DIR="$KIT"
+if [[ -n "$CMUX_WORKSPACE_ID" ]]; then
+  KIT_DIR="$(mktemp -d)"
+  cp -R "$KIT/"* "$KIT_DIR/"
+  # Insert cmux env vars into spec.yaml. We append them after the existing
+  # CMUX_NOTIFY_URL line so they are defined for the sandbox.
+  SPEC_FILE="$KIT_DIR/spec.yaml"
+  if [[ -f "$SPEC_FILE" ]]; then
+    awk -v ws="$CMUX_WORKSPACE_ID" -v surf="$CMUX_SURFACE_ID" -v tab="$CMUX_TAB_ID" '
+      /CMUX_NOTIFY_URL:/ && !done {
+        print
+        print "    CMUX_WORKSPACE_ID: \"" ws "\""
+        print "    CMUX_SURFACE_ID: \"" surf "\""
+        print "    CMUX_TAB_ID: \"" tab "\""
+        done = 1
+        next
+      }
+      { print }
+    ' "$SPEC_FILE" > "$SPEC_FILE.tmp" && mv "$SPEC_FILE.tmp" "$SPEC_FILE"
+  fi
+fi
 
 if sbx ls --quiet 2>/dev/null | grep -qx "$NAME"; then
   echo "Attaching to existing sandbox: $NAME"
-  sbx run "$NAME" --kit "$KIT"
+  sbx run "$NAME" --kit "$KIT_DIR" ${PASS_THROUGH_ARGS[@]:+"${PASS_THROUGH_ARGS[@]}"}
 else
   echo "Creating new sandbox: $NAME"
-  sbx run --kit "$KIT" --name "$NAME" pi
+  sbx run --kit "$KIT_DIR" --name "$NAME" pi ${PASS_THROUGH_ARGS[@]:+"${PASS_THROUGH_ARGS[@]}"}
 fi
 
+if [[ "$KIT_DIR" != "$KIT" ]]; then
+  rm -rf "$KIT_DIR"
+fi
