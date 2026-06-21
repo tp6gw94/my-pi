@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Custom sandbox wrapper for Pi.
+# Mirrors Agent Safehouse assembly but uses a static base profile, appends
+# the browser addon by default, and appends the invocation directory as a
+# read/write workdir at launch time.
+
+BASE_PROFILE="${BASE_PROFILE:-$HOME/.pi/safehouse/custom-pi.sb}"
+BROWSER_ADDON="${BROWSER_ADDON:-$HOME/.pi/safehouse/browser-addon.sb}"
+
+if [[ ! -f "$BASE_PROFILE" ]]; then
+  echo "Base profile not found: $BASE_PROFILE" >&2
+  exit 1
+fi
+
+if [[ ! -f "$BROWSER_ADDON" ]]; then
+  echo "Browser addon not found: $BROWSER_ADDON" >&2
+  exit 1
+fi
+
+WORKDIR="$(pwd -P)"
+
+# Escape a string for use inside an SBPL double-quoted string.
+_sb_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+# Emit file-read* literal rules for every ancestor of $WORKDIR (including /).
+# This matches Safehouse's emit_path_ancestor_literals() behavior.
+_emit_workdir_ancestors() {
+  local path="$1"
+  local trimmed current=""
+
+  printf '    (literal "/")\n'
+
+  trimmed="${path#/}"
+  if [[ -n "$trimmed" ]]; then
+    local IFS='/'
+    local -a parts=()
+    read -r -a parts <<< "$trimmed"
+    for part in "${parts[@]}"; do
+      [[ -z "$part" ]] && continue
+      current="${current}/${part}"
+      printf '    (literal "%s")\n' "$(_sb_escape "$current")"
+    done
+  fi
+}
+
+TMP_POLICY="$(mktemp "${TMPDIR:-/tmp}/safe-pi-policy.XXXXXX")"
+trap 'rm -f "$TMP_POLICY"' EXIT
+
+cp "$BASE_PROFILE" "$TMP_POLICY"
+
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Browser addon (loaded by default)
+;; Source: ${BROWSER_ADDON}
+;; ---------------------------------------------------------------------------
+EOF
+  cat "$BROWSER_ADDON"
+} >> "$TMP_POLICY"
+
+# Tell Playwright-backed browser automation not to re-init an inner sandbox.
+export PLAYWRIGHT_MCP_SANDBOX=false
+
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Launch-time workdir access
+;; Generated for: ${WORKDIR}
+;; ---------------------------------------------------------------------------
+(allow file-read*
+$(_emit_workdir_ancestors "$WORKDIR")
+)
+(allow file-read* file-write* (subpath "$(_sb_escape "$WORKDIR")"))
+EOF
+} >> "$TMP_POLICY"
+
+exec sandbox-exec -f "$TMP_POLICY" -- pi "$@"

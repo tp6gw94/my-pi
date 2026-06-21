@@ -126,6 +126,126 @@ function runCmux(args, description) {
   });
 }
 
+function runCmuxWithOutput(args, description) {
+  return new Promise((resolve, reject) => {
+    log("cmux command start", { description, args });
+    const child = spawn("cmux", args, { stdio: ["ignore", "pipe", "pipe"] });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on("error", (error) => {
+      log("cmux command error", { description, error: error.message });
+      reject(error);
+    });
+    child.on("exit", (code) => {
+      if (code === 0) {
+        log("cmux command ok", { description });
+        resolve(stdout);
+        return;
+      }
+      const detail = stderr.trim();
+      const error = new Error(`${description} exited with ${code}${detail ? ": " + detail : ""}`);
+      log("cmux command failed", { description, code, stderr: detail });
+      reject(error);
+    });
+  });
+}
+
+async function runCmuxRpc(method, params) {
+  const output = await runCmuxWithOutput(
+    ["rpc", method, JSON.stringify(params)],
+    `cmux rpc ${method}`
+  );
+  return JSON.parse(output || "{}");
+}
+
+function formatMessagesForTitle(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return "";
+  const parts = [];
+  let chars = 0;
+  const MAX_CHARS = 2000;
+  for (let i = 0; i < messages.length && chars < MAX_CHARS; i++) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== "object") continue;
+    const role = String(msg.role ?? "");
+    if (role !== "user" && role !== "assistant") continue;
+    const text = extractTextFromContent(msg.content).trim();
+    if (!text) continue;
+    const snippet = text.slice(0, Math.min(text.length, MAX_CHARS - chars));
+    parts.push(`${role}: ${snippet}`);
+    chars += snippet.length + role.length + 2;
+  }
+  return parts.join("\n");
+}
+
+async function generateTitle(messages) {
+  const conversation = formatMessagesForTitle(messages);
+  if (!conversation) {
+    throw new Error("no conversation text to summarize");
+  }
+
+  const prompt = `Summarize the following coding assistant conversation into a concise 2-5 word workspace title. Reply with ONLY the title, no quotes, no explanation, no punctuation at the end.\n\n${conversation}`;
+
+  return new Promise((resolve, reject) => {
+    log("generating title");
+    const child = spawn("pi", ["-p", "--no-session", prompt], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on("error", (error) => {
+      log("title generation error", { error: error.message });
+      reject(error);
+    });
+    child.on("exit", (code) => {
+      if (code !== 0) {
+        const detail = stderr.trim();
+        log("title generation failed", { code, stderr: detail });
+        reject(new Error(`pi exited with ${code}${detail ? ": " + detail : ""}`));
+        return;
+      }
+      const title = stdout.trim().replace(/^["']|["']$/g, "").split("\n")[0].trim();
+      if (!title) {
+        reject(new Error("pi returned empty title"));
+        return;
+      }
+      log("title generated", { title });
+      resolve(title);
+    });
+  });
+}
+
+async function runCmuxAutoRename({ workspaceId, title, messages }) {
+  const resolvedTitle = title || (await generateTitle(messages));
+  const normalizedTitle = normalize(resolvedTitle, "").slice(0, 60);
+  if (!normalizedTitle) {
+    throw new Error("empty title");
+  }
+
+  const result = await runCmuxRpc("workspace.set_auto_title", {
+    workspace_id: workspaceId,
+    title: normalizedTitle,
+  });
+
+  log("auto rename result", { workspaceId, title: normalizedTitle, result });
+  return result;
+}
+
 async function runCmuxNotify({ title, subtitle, body, target }) {
   const baseArgs = ["--title", title, "--subtitle", subtitle, "--body", body];
   const notifyArgs = ["notify", ...targetArgs(target), ...baseArgs];
@@ -169,59 +289,94 @@ async function handleStatus(payload, target) {
   });
 }
 
+async function handleNotify(req, res, rawBody) {
+  const payload = JSON.parse(rawBody || "{}");
+  const target = targetFromPayload(payload);
+
+  log("notify received", {
+    remoteAddress: req.socket.remoteAddress,
+    title: normalize(payload.title, ""),
+    target,
+  });
+
+  // Always update sidebar status if a status is provided.
+  await handleStatus(payload, target);
+
+  // Send a desktop notification unless explicitly disabled.
+  if (payload.notify !== false) {
+    let notifyBody = normalize(payload.body, "");
+    // If the extension sent an empty/fallback body but included raw messages,
+    // re-extract the last assistant text here so the notification is useful.
+    if (!notifyBody || notifyBody === "Pi is ready for input") {
+      const fromMessages = getLastAssistantBody(payload.messages);
+      if (fromMessages) notifyBody = fromMessages;
+    }
+    const message = {
+      title: normalize(payload.title, "Pi"),
+      subtitle: normalize(payload.subtitle, ""),
+      body: notifyBody,
+      target,
+    };
+    await runCmuxNotify(message);
+  }
+
+  log("notify delivered", { target });
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleRename(req, res, rawBody) {
+  const payload = JSON.parse(rawBody || "{}");
+  const target = targetFromPayload(payload);
+  const workspaceId =
+    typeof payload.workspace_id === "string" ? payload.workspace_id : target.workspace;
+
+  if (!workspaceId) {
+    sendJson(res, 400, { error: "missing workspace_id" });
+    return;
+  }
+
+  log("rename received", {
+    remoteAddress: req.socket.remoteAddress,
+    workspaceId,
+    hasTitle: typeof payload.title === "string",
+    hasMessages: Array.isArray(payload.messages),
+  });
+
+  const result = await runCmuxAutoRename({
+    workspaceId,
+    title: typeof payload.title === "string" ? payload.title : "",
+    messages: Array.isArray(payload.messages) ? payload.messages : undefined,
+  });
+
+  sendJson(res, 200, { ok: true, result });
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/health") {
     sendJson(res, 200, { ok: true });
     return;
   }
 
-  if (req.method !== "POST" || req.url !== "/notify") {
+  if (req.method !== "POST" || (req.url !== "/notify" && req.url !== "/rename")) {
     sendJson(res, 404, { error: "not found" });
     return;
   }
 
   if (token && req.headers["x-cmux-notify-token"] !== token) {
-    log("notify unauthorized", { remoteAddress: req.socket.remoteAddress });
+    log("request unauthorized", { remoteAddress: req.socket.remoteAddress, path: req.url });
     sendJson(res, 401, { error: "unauthorized" });
     return;
   }
 
   try {
     const rawBody = await readBody(req);
-    const payload = JSON.parse(rawBody || "{}");
-    const target = targetFromPayload(payload);
-
-    log("notify received", {
-      remoteAddress: req.socket.remoteAddress,
-      title: normalize(payload.title, ""),
-      target,
-    });
-
-    // Always update sidebar status if a status is provided.
-    await handleStatus(payload, target);
-
-    // Send a desktop notification unless explicitly disabled.
-    if (payload.notify !== false) {
-      let notifyBody = normalize(payload.body, "");
-      // If the extension sent an empty/fallback body but included raw messages,
-      // re-extract the last assistant text here so the notification is useful.
-      if (!notifyBody || notifyBody === "Pi is ready for input") {
-        const fromMessages = getLastAssistantBody(payload.messages);
-        if (fromMessages) notifyBody = fromMessages;
-      }
-      const message = {
-        title: normalize(payload.title, "Pi"),
-        subtitle: normalize(payload.subtitle, ""),
-        body: notifyBody,
-        target,
-      };
-      await runCmuxNotify(message);
+    if (req.url === "/rename") {
+      await handleRename(req, res, rawBody);
+    } else {
+      await handleNotify(req, res, rawBody);
     }
-
-    log("notify delivered", { target });
-    sendJson(res, 200, { ok: true });
   } catch (error) {
-    log("notify failed", { error: error.message });
+    log("request failed", { path: req.url, error: error.message });
     sendJson(res, 500, { error: error.message });
   }
 });
