@@ -50,6 +50,36 @@ _emit_workdir_ancestors() {
   fi
 }
 
+# If the current directory is a linked git worktree, print the absolute path
+# of the main (original) worktree. Returns nothing for normal checkouts,
+# bare repos, or when git is unavailable.
+_detect_main_worktree() {
+  local git_dir git_common_dir superproject main_worktree
+
+  git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+  git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+  superproject="$(git rev-parse --show-superproject-working-tree 2>/dev/null || true)"
+
+  # Same git-dir and common-dir means a normal checkout (or submodule).
+  # A non-empty superproject path means we are inside a submodule, not a worktree.
+  if [[ -z "$git_dir" || -z "$git_common_dir" || "$git_dir" == "$git_common_dir" || -n "$superproject" ]]; then
+    return 0
+  fi
+
+  # The first entry from `git worktree list --porcelain` is always the main worktree.
+  main_worktree="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree / {print $2; exit}')"
+
+  # Fallback for unusual git-dir layouts: the main checkout usually sits
+  # directly above the shared common git dir.
+  if [[ -z "$main_worktree" ]]; then
+    main_worktree="${git_common_dir%/*}"
+  fi
+
+  if [[ -n "$main_worktree" && -d "$main_worktree" ]]; then
+    (cd "$main_worktree" && pwd -P)
+  fi
+}
+
 TMP_POLICY="$(mktemp "${TMPDIR:-/tmp}/safe-pi-policy.XXXXXX")"
 trap 'rm -f "$TMP_POLICY"' EXIT
 
@@ -82,5 +112,24 @@ $(_emit_workdir_ancestors "$WORKDIR")
 (allow file-read* file-write* (subpath "$(_sb_escape "$WORKDIR")"))
 EOF
 } >> "$TMP_POLICY"
+
+# When running inside a linked git worktree, also allow read access to the
+# main worktree so cross-worktree diff/inspect workflows can see the baseline.
+MAIN_WORKTREE="$(_detect_main_worktree)"
+if [[ -n "$MAIN_WORKTREE" ]]; then
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Main worktree read access (linked worktree detected)
+;; Main worktree: ${MAIN_WORKTREE}
+;; ---------------------------------------------------------------------------
+(allow file-read*
+$(_emit_workdir_ancestors "$MAIN_WORKTREE")
+)
+(allow file-read* (subpath "$(_sb_escape "$MAIN_WORKTREE")"))
+EOF
+} >> "$TMP_POLICY"
+fi
 
 exec sandbox-exec -f "$TMP_POLICY" -- pi "$@"
