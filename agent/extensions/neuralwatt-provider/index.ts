@@ -79,6 +79,7 @@ function toProviderModel(model: NeuralWattModel): ProviderModelConfig {
 			cacheRead: pricing.cached_input_per_million ?? 0,
 			cacheWrite: 0,
 		} : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		compat: { supportsDeveloperRole: false },
 	};
 }
 
@@ -91,6 +92,7 @@ const FALLBACK_MODELS: ProviderModelConfig[] = [
 		contextWindow: 131072,
 		maxTokens: 32768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		compat: { supportsDeveloperRole: false },
 	},
 ];
 
