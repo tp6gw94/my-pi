@@ -7,6 +7,23 @@ interface NeuralWattModel {
 	object?: string;
 	created?: number;
 	owned_by?: string;
+	max_model_len?: number;
+	metadata?: {
+		display_name?: string;
+		capabilities?: {
+			vision?: boolean;
+			reasoning?: boolean;
+		};
+		limits?: {
+			max_context_length?: number;
+			max_output_tokens?: number | null;
+		};
+		pricing?: {
+			input_per_million?: number;
+			output_per_million?: number;
+			cached_input_per_million?: number;
+		};
+	};
 }
 
 async function fetchModels(apiKey: string | undefined): Promise<NeuralWattModel[]> {
@@ -38,15 +55,30 @@ function guessModelCapabilities(id: string): { reasoning: boolean; input: ("text
 }
 
 function toProviderModel(model: NeuralWattModel): ProviderModelConfig {
-	const { reasoning, input } = guessModelCapabilities(model.id);
+	const fallback = guessModelCapabilities(model.id);
+	const capabilities = model.metadata?.capabilities;
+	const limits = model.metadata?.limits;
+	const pricing = model.metadata?.pricing;
+
+	const reasoning = capabilities?.reasoning ?? fallback.reasoning;
+	const input: ("text" | "image")[] =
+		capabilities?.vision === true ? ["text", "image"] :
+		capabilities?.vision === false ? ["text"] :
+		fallback.input;
+
 	return {
 		id: model.id,
 		name: model.id.split("/").pop() ?? model.id,
 		reasoning,
 		input,
-		contextWindow: 128000,
-		maxTokens: 32768,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: limits?.max_context_length ?? model.max_model_len ?? 128000,
+		maxTokens: limits?.max_output_tokens ?? 32768,
+		cost: pricing ? {
+			input: pricing.input_per_million ?? 0,
+			output: pricing.output_per_million ?? 0,
+			cacheRead: pricing.cached_input_per_million ?? 0,
+			cacheWrite: 0,
+		} : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	};
 }
 
