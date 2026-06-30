@@ -295,11 +295,13 @@
 (allow file-read*
     (literal "/Applications")
     (subpath "/Applications/Google Chrome.app")
+    (subpath "/Applications/cmux.app")
     (literal "/System")
     (literal "/System/Volumes")
     (literal "/System/Volumes/Data")
     (literal "/System/Volumes/Data/Applications")
     (subpath "/System/Volumes/Data/Applications/Google Chrome.app")
+    (subpath "/System/Volumes/Data/Applications/cmux.app")
     (literal "/Library")
     (home-literal "/Library/Preferences/com.google.Chrome.plist")
     (home-literal "/Library/Preferences/com.google.chrome.for.testing.plist")
