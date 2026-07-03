@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.80.2",
-  "defaultProvider": "neuralwatt",
-  "defaultModel": "glm-5.2-short",
+  "defaultProvider": "deepinfra",
+  "defaultModel": "XiaomiMiMo/MiMo-V2.5",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
@@ -9,7 +9,8 @@
     "npm:pi-web-access",
     "npm:pi-mcp-adapter",
     "git:github.com/DietrichGebert/ponytail",
-    "extensions/neuralwatt-provider"
+    "extensions/neuralwatt-provider",
+    "extensions/deepinfra-provider"
   ],
   "theme": "github-light",
   "subagents": {
@@ -19,7 +20,7 @@
         "thinking": "medium"
       },
       "researcher": {
-        "model": "deepseek/deepseek-v4-flash",
+        "model": "deepinfra/deepseek-ai/DeepSeek-V4-Flash",
         "thinking": "medium"
       },
       "planner": {
