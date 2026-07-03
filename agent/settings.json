@@ -27,8 +27,16 @@
         "model": "neuralwatt/glm-5.2-short",
         "thinking": "high"
       },
+      "reviewer": {
+        "model": "deepinfra/XiaomiMiMo/MiMo-V2.5-Pro",
+        "thinking": "high"
+      },
+      "oracle": {
+        "model": "deepinfra/deepseek-ai/DeepSeek-V4-Pro",
+        "thinking": "high"
+      },
       "worker": {
-        "model": "kimi-coding/kimi-for-coding",
+        "model": "deepinfra/deepseek-ai/DeepSeek-V4-Flash",
         "thinking": "medium"
       }
     }
