@@ -842,11 +842,13 @@
 ;; - ~/.agents/ (full access)
 ;; - ~/AGENTS.md (full access)
 ;; - ~/.claude/agents, ~/.claude/skills, ~/CLAUDE.md (read-only)
+;; - ~/.agent/diagrams/ (full access for visual explainer output)
 
 (allow file-read* file-write*
     (home-subpath "/.skills")         ;; Shared skill instructions/scripts that agents may read or update.
     (home-subpath "/.agents")         ;; Agent config/skills directory (alternate location alongside ~/.skills).
     (home-literal "/AGENTS.md")       ;; Shared agent policy/instructions file read+write for local workflows.
+    (home-subpath "/.agent/diagrams") ;; Visual explainer output directory read+write
 )
 
 (allow file-read*
