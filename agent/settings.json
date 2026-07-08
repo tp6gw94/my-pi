@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.80.2",
-  "defaultProvider": "deepinfra",
-  "defaultModel": "XiaomiMiMo/MiMo-V2.5",
+  "defaultProvider": "neuralwatt",
+  "defaultModel": "kimi-k2.7-code",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
@@ -10,7 +10,8 @@
     "npm:pi-mcp-adapter",
     "git:github.com/DietrichGebert/ponytail",
     "extensions/neuralwatt-provider",
-    "extensions/deepinfra-provider"
+    "extensions/deepinfra-provider",
+    "git:github.com/nicobailon/visual-explainer"
   ],
   "theme": "github-light",
   "subagents": {
@@ -24,7 +25,7 @@
         "thinking": "medium"
       },
       "planner": {
-        "model": "neuralwatt/glm-5.2-short",
+        "model": "deepinfra/zai-org/GLM-5.2",
         "thinking": "high"
       },
       "reviewer": {
@@ -37,6 +38,10 @@
       },
       "worker": {
         "model": "deepinfra/deepseek-ai/DeepSeek-V4-Flash",
+        "thinking": "medium"
+      },
+      "context-builder": {
+        "model": "neuralwatt/qwen3.5-397b",
         "thinking": "medium"
       }
     }
