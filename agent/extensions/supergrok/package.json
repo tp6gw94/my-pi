@@ -1,0 +1,17 @@
+{
+  "name": "supergrok",
+  "version": "0.2.0",
+  "description": "Super Grok / xAI OAuth provider for pi",
+  "type": "module",
+  "main": "index.ts",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "license": "MIT"
+}

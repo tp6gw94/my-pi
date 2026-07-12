@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.80.2",
-  "defaultProvider": "neuralwatt",
-  "defaultModel": "kimi-k2.7-code",
+  "defaultProvider": "supergrok",
+  "defaultModel": "grok-4.5",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
@@ -11,7 +11,8 @@
     "git:github.com/DietrichGebert/ponytail",
     "extensions/neuralwatt-provider",
     "extensions/deepinfra-provider",
-    "git:github.com/nicobailon/visual-explainer"
+    "git:github.com/nicobailon/visual-explainer",
+    "extensions/supergrok"
   ],
   "theme": "github-light",
   "subagents": {
