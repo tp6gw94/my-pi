@@ -51,6 +51,25 @@ _emit_workdir_ancestors() {
   fi
 }
 
+# Absolute path of the shared git common dir, or empty if not in a repo.
+# Needed so commit/reset/av can write refs/objects when .git lives outside WORKDIR
+# (linked worktree, or safe-pi launched from a subdirectory).
+_detect_git_common_dir() {
+  local d
+
+  d="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [[ -z "$d" ]]; then
+    d="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+    if [[ -n "$d" && "$d" != /* ]]; then
+      d="$(pwd -P)/$d"
+    fi
+  fi
+
+  if [[ -n "$d" && -d "$d" ]]; then
+    (cd "$d" && pwd -P)
+  fi
+}
+
 # If the current directory is a linked git worktree, print the absolute path
 # of the main (original) worktree. Returns nothing for normal checkouts,
 # bare repos, or when git is unavailable.
@@ -146,5 +165,37 @@ $(_emit_workdir_ancestors "$MAIN_WORKTREE")
 EOF
 } >> "$TMP_POLICY"
 fi
+
+# RW on shared git metadata so reset/commit/amend/av restack/pr can update
+# refs, objects, and .git/av even when common-dir is outside WORKDIR.
+GIT_COMMON_DIR="$(_detect_git_common_dir)"
+if [[ -n "$GIT_COMMON_DIR" ]]; then
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Git common-dir write access (commit / reset / av)
+;; Common dir: ${GIT_COMMON_DIR}
+;; ---------------------------------------------------------------------------
+(allow file-read*
+$(_emit_workdir_ancestors "$GIT_COMMON_DIR")
+)
+(allow file-read* file-write* (subpath "$(_sb_escape "$GIT_COMMON_DIR")"))
+EOF
+} >> "$TMP_POLICY"
+fi
+
+# Aviator CLI config (stack metadata lives under .git; this is auth/settings).
+AV_CONFIG_DIR="${AV_HOME:-$HOME/.config/av}"
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Aviator CLI (av) config
+;; AV_HOME / config: ${AV_CONFIG_DIR}
+;; ---------------------------------------------------------------------------
+(allow file-read* file-write* (subpath "$(_sb_escape "$AV_CONFIG_DIR")"))
+EOF
+} >> "$TMP_POLICY"
 
 exec sandbox-exec -f "$TMP_POLICY" -- pi "$@"
