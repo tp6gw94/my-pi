@@ -25,13 +25,42 @@ interface XaiLanguageModel {
   fingerprint?: string
 }
 
+// openai-responses always sends reasoning.effort when model.reasoning + thinking level are set.
+// xAI only accepts effort on a few models; others (e.g. grok-build) reject it with 400.
+// All-null map → no effort payload; server still does always-on reasoning.
+const NO_EFFORT_MAP = {
+  off: null,
+  minimal: null,
+  low: null,
+  medium: null,
+  high: null,
+  xhigh: null,
+} as const
+
+type ThinkingLevelMap = NonNullable<ProviderModelConfig["thinkingLevelMap"]>
+
+function reasoningMeta(id: string): { reasoning: boolean; thinkingLevelMap?: ThinkingLevelMap } {
+  if (id.includes("non-reasoning")) return { reasoning: false }
+
+  // https://docs.x.ai/developers/model-capabilities/text/reasoning
+  if (id.startsWith("grok-4.5")) {
+    return { reasoning: true, thinkingLevelMap: { off: null, minimal: null } } // low|medium|high
+  }
+  if (id.includes("multi-agent")) {
+    return { reasoning: true, thinkingLevelMap: { off: null, minimal: null, xhigh: "xhigh" } }
+  }
+
+  // Always-on reasoning, effort not configurable (grok-build, 4.20-reasoning, 4.3, ...)
+  return { reasoning: true, thinkingLevelMap: { ...NO_EFFORT_MAP } }
+}
+
 const FALLBACK_MODELS: ProviderModelConfig[] = [
-  { id: "grok-4.5", name: "Grok 4.5", reasoning: true, input: ["text", "image"], cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 }, contextWindow: 500_000, maxTokens: 30_000 },
-  { id: "grok-4.3", name: "Grok 4.3", reasoning: true, input: ["text", "image"], cost: { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 1_000_000, maxTokens: 30_000 },
-  { id: "grok-4.20-0309-reasoning", name: "Grok 4.20 Reasoning", reasoning: true, input: ["text", "image"], cost: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 2_000_000, maxTokens: 30_000 },
-  { id: "grok-4.20-0309-non-reasoning", name: "Grok 4.20 Non-Reasoning", reasoning: false, input: ["text", "image"], cost: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 2_000_000, maxTokens: 30_000 },
-  { id: "grok-4.20-multi-agent-0309", name: "Grok 4.20 Multi-Agent", reasoning: true, input: ["text", "image"], cost: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 2_000_000, maxTokens: 30_000 },
-  { id: "grok-build-0.1", name: "Grok Build", reasoning: true, input: ["text", "image"], cost: { input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 256_000, maxTokens: 30_000 },
+  { id: "grok-4.5", name: "Grok 4.5", ...reasoningMeta("grok-4.5"), input: ["text", "image"], cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 }, contextWindow: 500_000, maxTokens: 30_000 },
+  { id: "grok-4.3", name: "Grok 4.3", ...reasoningMeta("grok-4.3"), input: ["text", "image"], cost: { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 1_000_000, maxTokens: 30_000 },
+  { id: "grok-4.20-0309-reasoning", name: "Grok 4.20 Reasoning", ...reasoningMeta("grok-4.20-0309-reasoning"), input: ["text", "image"], cost: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 2_000_000, maxTokens: 30_000 },
+  { id: "grok-4.20-0309-non-reasoning", name: "Grok 4.20 Non-Reasoning", ...reasoningMeta("grok-4.20-0309-non-reasoning"), input: ["text", "image"], cost: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 2_000_000, maxTokens: 30_000 },
+  { id: "grok-4.20-multi-agent-0309", name: "Grok 4.20 Multi-Agent", ...reasoningMeta("grok-4.20-multi-agent-0309"), input: ["text", "image"], cost: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 2_000_000, maxTokens: 30_000 },
+  { id: "grok-build-0.1", name: "Grok Build", ...reasoningMeta("grok-build-0.1"), input: ["text", "image"], cost: { input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0 }, contextWindow: 256_000, maxTokens: 30_000 },
 ]
 
 function xaiPriceToDollars(centsPer100M: number): number {
@@ -71,11 +100,13 @@ function toProviderModel(m: XaiLanguageModel): ProviderModelConfig {
     .map(xaiModalityToInput)
     .filter((x): x is "text" | "image" => x !== undefined)
   const fallbackCost = defaultCostForModel(m)
+  const { reasoning, thinkingLevelMap } = reasoningMeta(m.id)
 
   return {
     id: m.id,
     name: m.id,
-    reasoning: !m.id.includes("non-reasoning"),
+    reasoning,
+    thinkingLevelMap,
     input: input.length ? input : ["text", "image"],
     cost: {
       input: xaiPriceToDollars(m.prompt_text_token_price ?? fallbackCost.input * 100_000_000),
@@ -192,7 +223,14 @@ export default function (pi: ExtensionAPI) {
       },
     },
     streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions) {
-      return streamSimpleOpenAIResponses(model as any, context, {
+      // Belt: force correct thinkingLevelMap even if discovery/template dropped it.
+      const meta = reasoningMeta(model.id)
+      const patched = {
+        ...model,
+        reasoning: meta.reasoning,
+        thinkingLevelMap: meta.thinkingLevelMap ?? model.thinkingLevelMap,
+      } as Model<Api>
+      return streamSimpleOpenAIResponses(patched as any, context, {
         ...options,
         headers: { ...options?.headers, "User-Agent": USER_AGENT },
       })
