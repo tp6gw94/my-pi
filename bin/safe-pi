@@ -9,6 +9,7 @@ set -euo pipefail
 BASE_PROFILE="${BASE_PROFILE:-$HOME/.pi/safehouse/custom-pi.sb}"
 BROWSER_ADDON="${BROWSER_ADDON:-$HOME/.pi/safehouse/browser-addon.sb}"
 KEYCHAIN_ADDON="${KEYCHAIN_ADDON:-$HOME/.pi/safehouse/keychain-addon.sb}"
+EMACS_ADDON="${EMACS_ADDON:-$HOME/.pi/safehouse/emacs-addon.sb}"
 
 if [[ ! -f "$BASE_PROFILE" ]]; then
   echo "Base profile not found: $BASE_PROFILE" >&2
@@ -127,6 +128,20 @@ if [[ -f "$KEYCHAIN_ADDON" ]]; then
 ;; ---------------------------------------------------------------------------
 EOF
   cat "$KEYCHAIN_ADDON"
+} >> "$TMP_POLICY"
+fi
+
+# Emacs /Applications read + user emacs dirs.
+if [[ -f "$EMACS_ADDON" ]]; then
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Emacs addon (loaded by default if the addon file exists)
+;; Source: ${EMACS_ADDON}
+;; ---------------------------------------------------------------------------
+EOF
+  cat "$EMACS_ADDON"
 } >> "$TMP_POLICY"
 fi
 
