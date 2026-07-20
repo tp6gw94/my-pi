@@ -18,7 +18,7 @@
   "subagents": {
     "agentOverrides": {
       "scout": {
-        "model": "neuralwatt/qwen3.6-35b-fast",
+        "model": "deepinfra/deepseek-ai/DeepSeek-V4-Flash",
         "thinking": "medium"
       },
       "researcher": {
@@ -26,7 +26,7 @@
         "thinking": "medium"
       },
       "planner": {
-        "model": "deepinfra/zai-org/GLM-5.2",
+        "model": "deepinfra/deepseek-ai/DeepSeek-V4-Pro",
         "thinking": "high"
       },
       "reviewer": {
@@ -42,7 +42,7 @@
         "thinking": "medium"
       },
       "context-builder": {
-        "model": "neuralwatt/qwen3.5-397b",
+        "model": "deepinfra/deepseek-ai/DeepSeek-V4-Flash",
         "thinking": "medium"
       }
     }
