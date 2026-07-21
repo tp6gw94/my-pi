@@ -213,4 +213,20 @@ AV_CONFIG_DIR="${AV_HOME:-$HOME/.config/av}"
 EOF
 } >> "$TMP_POLICY"
 
+# Mirror Safehouse runtime_build_sanitized_exec_path: bare names like rg/fd
+# must resolve without requiring /opt/homebrew/bin/... full paths.
+_ensure_path_entry() {
+  local entry="$1"
+  case ":${PATH:-}:" in
+    *:"$entry":*) return 0 ;;
+  esac
+  PATH="${PATH:+$PATH:}$entry"
+}
+_ensure_path_entry /usr/local/bin
+_ensure_path_entry /usr/local/sbin
+_ensure_path_entry /opt/homebrew/bin
+_ensure_path_entry /opt/homebrew/sbin
+_ensure_path_entry "$HOME/.local/bin"
+export PATH
+
 exec sandbox-exec -f "$TMP_POLICY" -- pi "$@"
