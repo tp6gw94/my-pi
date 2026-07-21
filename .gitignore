@@ -3,7 +3,7 @@ exa-usage.json
 mcp-*.json
 trust.json
 sessions
-/skills/
+/agent/skills/
 memory
 node_modules
 docker-pi-kit/kit/files/home/.pi/agent
