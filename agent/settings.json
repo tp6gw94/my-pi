@@ -12,7 +12,8 @@
     "extensions/neuralwatt-provider",
     "extensions/deepinfra-provider",
     "git:github.com/nicobailon/visual-explainer",
-    "extensions/supergrok"
+    "extensions/supergrok",
+    "extensions/ast-grep"
   ],
   "theme": "github-light",
   "subagents": {
