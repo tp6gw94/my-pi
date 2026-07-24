@@ -1,0 +1,6 @@
+{
+  "name": "opencode-provider",
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

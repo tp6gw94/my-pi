@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.80.2",
-  "defaultProvider": "supergrok",
-  "defaultModel": "grok-4.5",
+  "defaultProvider": "opencode-go",
+  "defaultModel": "hy3",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
