@@ -153,9 +153,7 @@ function triggerDiscovery(accessToken: string): void {
     .then((models) => {
       if (models.length > 0) discoveredModels = models
     })
-    .catch((err) => {
-      console.warn("[supergrok] discovery failed:", err)
-    })
+    .catch(() => {})
     .finally(() => {
       discoveryInFlight = null
     })
