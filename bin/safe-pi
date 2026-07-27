@@ -104,7 +104,20 @@ _detect_main_worktree() {
 TMP_POLICY="$(mktemp "${TMPDIR:-/tmp}/safe-pi-policy.XXXXXX")"
 trap 'rm -f "$TMP_POLICY"' EXIT
 
-cp "$BASE_PROFILE" "$TMP_POLICY"
+# Render the HOME_DIR placeholder at launch time so the profile stays
+# machine-independent (mirrors safehouse bin/lib/policy/render.sh).
+HOME_DIR="$(cd "$HOME" && pwd -P)"
+sed "s|__SAFEHOUSE_HOME_DIR__|$(_sb_escape "$HOME_DIR")|g" "$BASE_PROFILE" > "$TMP_POLICY"
+
+if grep -q '__SAFEHOUSE_HOME_DIR__' "$TMP_POLICY"; then
+  echo "Failed to render HOME_DIR placeholder in: $BASE_PROFILE" >&2
+  exit 1
+fi
+
+if ! grep -q "^(define HOME_DIR \"" "$TMP_POLICY"; then
+  echo "Base profile has no HOME_DIR definition: $BASE_PROFILE" >&2
+  exit 1
+fi
 
 {
   cat <<EOF

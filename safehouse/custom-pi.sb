@@ -25,7 +25,7 @@
 ;; Manual policy-only example (no generator):
 ;;   Replace the next line with:
 ;;     (define HOME_DIR "/Users/alice")
-(define HOME_DIR "/Users/todd")
+(define HOME_DIR "__SAFEHOUSE_HOME_DIR__")
 
 (define (home-subpath rel) (subpath (string-append HOME_DIR rel)))
 (define (home-literal rel) (literal (string-append HOME_DIR rel)))
@@ -289,7 +289,7 @@
 (allow file-read* (literal "/private/etc"))
 
 ;; Generated HOME ancestor metadata access for home-scoped runtime/toolchain discovery.
-;; #safehouse-test-id:home-ancestor-metadata# Metadata-only ancestor directory literals for HOME path: /Users/todd
+;; #safehouse-test-id:home-ancestor-metadata# Metadata-only ancestor directory literals for HOME path: HOME_DIR
 ;;
 ;; Why file-read-metadata on HOME ancestors:
 ;; Some macOS runtimes probe HOME-scoped toolchain paths (for example ~/Library/Java)
@@ -299,7 +299,7 @@
 (allow file-read-metadata
     (literal "/")
     (literal "/Users")
-    (literal "/Users/todd")
+    (home-literal "")
 )
 ;; ---------------------------------------------------------------------------
 ;; Network
