@@ -1,6 +1,6 @@
 {
   "name": "full-auto",
-  "description": "Unattended pipeline: explore -> plan -> oracle review -> planner revision -> worker implements -> 3 reviewers -> oracle triage -> worker fixes",
+  "description": "Unattended pipeline: explore -> context-builder contract -> plan -> oracle review -> planner revision -> worker implements -> 3 reviewers -> oracle triage -> worker fixes",
   "chain": [
     {
       "parallel": [
@@ -58,6 +58,15 @@
       "concurrency": 4
     },
     {
+      "agent": "context-builder",
+      "phase": "Plan",
+      "label": "Task contract",
+      "as": "taskContract",
+      "output": "context.md",
+      "progress": true,
+      "task": "Build a planner-ready task contract for: {task}\n\nRead every file under .explore/ and use the exploration summaries plus external research. Distill high-signal context and a compact meta-prompt the planner can execute without rediscovering the same ground.\n\nExploration summaries:\n{outputs.explorations}\n\nExternal research (may say none needed):\n{outputs.externalResearch}\n\nWrite the handoff to the configured output path. Include: relevant files with paths/line ranges, existing patterns, constraints/risks, and a meta-prompt with goal, evidence, success criteria, hard constraints, suggested approach, validation, stop/escalation rules, and assumptions. Do not write source code or a full execution plan."
+    },
+    {
       "agent": "planner",
       "phase": "Plan",
       "label": "Draft plan",
@@ -65,7 +74,7 @@
       "output": "plan.md",
       "skills": "write-plan",
       "progress": true,
-      "task": "Write a decision-complete execution plan for: {task}\n\nBefore writing anything, read the write-plan SKILL.md in full and follow its plan output format exactly. Read every file under .explore/ as gathered context; make reasonable assumptions instead of asking questions, and record them under Risks and Assumptions. Derive a slug and write .plan/<slug>/task.md in the required format. Do not write source code.\n\nExternal research input (may say none needed):\n{outputs.externalResearch}\n\nReturn the absolute path of task.md and a one-sentence plan summary."
+      "task": "Write a decision-complete execution plan for: {task}\n\nBefore writing anything, read the write-plan SKILL.md in full and follow its plan output format exactly. Treat the task contract as the primary handoff; also read every file under .explore/ as supporting context. Make reasonable assumptions instead of asking questions, and record them under Risks and Assumptions. Derive a slug and write .plan/<slug>/task.md in the required format. Do not write source code.\n\nTask contract:\n{outputs.taskContract}\n\nExternal research input (may say none needed):\n{outputs.externalResearch}\n\nReturn the absolute path of task.md and a one-sentence plan summary."
     },
     {
       "agent": "oracle",
