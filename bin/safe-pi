@@ -161,6 +161,16 @@ fi
 # Tell Playwright-backed browser automation not to re-init an inner sandbox.
 export PLAYWRIGHT_MCP_SANDBOX=false
 
+# pi-subagents spawns children via bare `pi`, walking PATH. Under the sandbox,
+# early PATH entries outside the profile (e.g. ~/.config/bin, ~/.kiro/bin) make
+# that PATH walk fail with spawn EPERM before reaching mise's pi. Resolve pi
+# once here (outside the sandbox) and hand subagents the absolute path.
+if [[ -z "${PI_SUBAGENT_PI_BINARY:-}" ]]; then
+  if PI_RESOLVED="$(command -v pi 2>/dev/null)"; then
+    export PI_SUBAGENT_PI_BINARY="$PI_RESOLVED"
+  fi
+fi
+
 {
   cat <<EOF
 
