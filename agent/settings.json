@@ -22,12 +22,16 @@
       "scout": {
         "model": "opencode-go/deepseek-v4-flash",
         "thinking": "medium",
-        "fallbackModels": ["deepinfra/deepseek-ai/DeepSeek-V4-Flash"]
+        "fallbackModels": [
+          "deepinfra/deepseek-ai/DeepSeek-V4-Flash"
+        ]
       },
       "researcher": {
         "model": "opencode-go/deepseek-v4-flash",
         "thinking": "medium",
-        "fallbackModels": ["deepinfra/deepseek-ai/DeepSeek-V4-Flash"]
+        "fallbackModels": [
+          "deepinfra/deepseek-ai/DeepSeek-V4-Flash"
+        ]
       },
       "planner": {
         "model": "opencode-go/kimi-k3",
@@ -56,7 +60,11 @@
       "worker": {
         "model": "alibabacloud/qwen3.8-max-preview",
         "thinking": "medium",
-        "fallbackModels": ["opencode-go/hy3", "deepinfra/tencent/Hy3"]
+        "fallbackModels": [
+          "opencode-go/hy3",
+          "deepinfra/tencent/Hy3"
+        ],
+        "skills": ["ponytail"]
       },
       "context-builder": {
         "model": "alibabacloud/qwen3.8-max-preview",
@@ -65,4 +73,3 @@
     }
   }
 }
-
