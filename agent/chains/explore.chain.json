@@ -1,0 +1,48 @@
+{
+  "name": "explore",
+  "description": "Scout splits the request into exploration areas, then fans out one explorer per area; each writes .explore/<area>.md",
+  "chain": [
+    {
+      "agent": "scout",
+      "phase": "Scoping",
+      "label": "Split into areas",
+      "as": "targets",
+      "progress": true,
+      "outputSchema": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["area", "focus"],
+              "properties": {
+                "area": { "type": "string", "description": "short kebab-case slug for the exploration area" },
+                "focus": { "type": "string", "description": "what this explorer should investigate" }
+              }
+            }
+          }
+        }
+      },
+      "task": "Analyze this request and split it into the distinct areas worth exploring before planning: {task}\n\nReturn the areas via structured_output as {\"items\":[{\"area\":\"kebab-slug\",\"focus\":\"what to investigate\"}]}. Keep it to the areas that materially affect the plan. Do not edit files."
+    },
+    {
+      "expand": {
+        "from": { "output": "targets", "path": "/items" },
+        "item": "target",
+        "key": "/area",
+        "maxItems": 6
+      },
+      "parallel": {
+        "agent": "scout",
+        "phase": "Exploration",
+        "label": "Explore {target.area}",
+        "progress": true,
+        "task": "Explore the '{target.area}' area for this request: {task}\n\nFocus: {target.focus}\n\nInvestigate relevant files, entry points, data flow, existing patterns, constraints, and risks. Write your findings to .explore/{target.area}.md in the project (create the directory if needed), covering what exists, what matters for the plan, and open questions. Then return a one-paragraph summary including the file path."
+      },
+      "collect": { "as": "explorations" },
+      "concurrency": 4
+    }
+  ]
+}

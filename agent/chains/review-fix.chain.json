@@ -1,0 +1,57 @@
+{
+  "name": "review-fix",
+  "description": "Three parallel reviewers (correctness, readability, maintainability), oracle triages what to fix, one worker applies the fixes",
+  "chain": [
+    {
+      "parallel": [
+        {
+          "agent": "reviewer",
+          "phase": "Review",
+          "label": "Correctness",
+          "as": "reviewCorrectness",
+          "output": "reviews/correctness.md",
+          "outputMode": "file-only",
+          "progress": true,
+          "task": "Review the current changes for correctness and regressions: {task}\n\nInspect the actual diff and code. Report only evidence-backed findings with file/line references: bugs, broken edge cases, missing validation, failing paths. Do not modify project/source files; returning findings through the configured output artifact is allowed."
+        },
+        {
+          "agent": "reviewer",
+          "phase": "Review",
+          "label": "Readability",
+          "as": "reviewReadability",
+          "output": "reviews/readability.md",
+          "outputMode": "file-only",
+          "progress": true,
+          "task": "Review the current changes for readability: {task}\n\nInspect the actual diff and code. Report only evidence-backed findings with file/line references: unclear names, confusing control flow, dead code, noise comments. Do not modify project/source files; returning findings through the configured output artifact is allowed."
+        },
+        {
+          "agent": "reviewer",
+          "phase": "Review",
+          "label": "Maintainability",
+          "as": "reviewMaintainability",
+          "output": "reviews/maintainability.md",
+          "outputMode": "file-only",
+          "progress": true,
+          "task": "Review the current changes for maintainability: {task}\n\nInspect the actual diff and code. Report only evidence-backed findings with file/line references: duplication, coupling, missing tests for changed behavior, hard-to-change structure. Do not modify project/source files; returning findings through the configured output artifact is allowed."
+        }
+      ],
+      "concurrency": 3
+    },
+    {
+      "agent": "oracle",
+      "phase": "Triage",
+      "label": "Decide fixes",
+      "as": "fixes",
+      "output": "fixes.md",
+      "progress": true,
+      "task": "Triage these three reviews for: {task}\n\nCorrectness review:\n{outputs.reviewCorrectness}\n\nReadability review:\n{outputs.reviewReadability}\n\nMaintainability review:\n{outputs.reviewMaintainability}\n\nDecide which findings are worth fixing now, which to defer, and which to ignore. For each accepted fix give the exact file, the problem, and the smallest safe change. Advisory only; do not modify project/source files."
+    },
+    {
+      "agent": "worker",
+      "phase": "Implementation",
+      "label": "Apply fixes",
+      "progress": true,
+      "task": "Apply only the accepted fixes from the oracle triage for: {task}\n\n{outputs.fixes}\n\nYou are the sole writer for the project. Do not expand scope beyond the accepted fixes. Run focused validation and report changed files, commands run with exit codes, failures, and remaining issues."
+    }
+  ]
+}
