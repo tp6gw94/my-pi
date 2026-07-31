@@ -1087,6 +1087,10 @@
     (home-subpath "/.pi")
 )
 
+(allow file-read*
+    (home-subpath "/.opencodereview")
+)
+
 (allow file-read-metadata
    (home-subpath "/Library")
 )

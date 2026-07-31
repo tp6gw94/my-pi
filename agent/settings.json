@@ -14,7 +14,7 @@
     "git:github.com/nicobailon/visual-explainer",
     "extensions/supergrok",
     "extensions/ast-grep",
-    "git:github.com/tp6gw94/pi-review-triage@v0.1.3"
+    "git:github.com/tp6gw94/pi-review-triage@v0.1.4"
   ],
   "theme": "github-light",
   "subagents": {
@@ -69,10 +69,10 @@
         ]
       },
       "context-builder": {
-        "model": "alibabacloud/qwen3.8-max-preview",
+        "model": "opencode-go/hy3",
         "thinking": "medium",
         "fallbackModels": [
-          "opencode-go/hy3",
+          "alibabacloud/qwen3.8-max-preview",
           "deepinfra/tencent/Hy3"
         ]
       }
