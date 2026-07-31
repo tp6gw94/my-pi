@@ -1,18 +1,44 @@
 {
   "name": "review-fix",
-  "description": "Four parallel reviewers (correctness, readability, maintainability, comments), oracle triages what to fix, one worker applies the fixes",
+  "description": "OCR reviews correctness+maintainability; parallel pi reviewers cover readability and comments; oracle triages; one worker applies fixes",
   "chain": [
+    {
+      "agent": "scout",
+      "phase": "Scaffold",
+      "label": "OCR preview",
+      "as": "preview",
+      "output": "reviews/preview.md",
+      "outputMode": "file-only",
+      "progress": true,
+      "outputSchema": {
+        "type": "object",
+        "required": ["files", "preview"],
+        "properties": {
+          "files": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" },
+            "description": "Reviewable file paths from ocr delegate preview"
+          },
+          "preview": {
+            "type": "string",
+            "description": "Full ocr delegate preview stdout"
+          }
+        }
+      },
+      "task": "Scaffold the review scope for: {task}\n\n1. Require `ocr` on PATH (`which ocr`). If missing, fail.\n2. Run exactly: `ocr delegate preview` (workspace mode only; no --from/--to/--commit unless the user task explicitly demands it).\n3. Parse the reviewable file list from stdout. Write the full preview stdout to the configured output artifact.\n4. Call structured_output with {\"files\":[...paths...],\"preview\":\"<full stdout>\"}.\n5. If there are zero reviewable files, do NOT invent paths — fail so the chain aborts.\n\nDo not modify project/source files."
+    },
     {
       "parallel": [
         {
-          "agent": "reviewer",
+          "agent": "delegate",
           "phase": "Review",
-          "label": "Correctness",
-          "as": "reviewCorrectness",
-          "output": "reviews/correctness.md",
+          "label": "OCR correctness+maintainability",
+          "as": "reviewOcr",
+          "output": "reviews/ocr.json",
           "outputMode": "file-only",
           "progress": true,
-          "task": "Review the current changes for correctness and regressions: {task}\n\nInspect the actual diff and code. Report only evidence-backed findings with file/line references: bugs, broken edge cases, missing validation, failing paths. Do not modify project/source files; returning findings through the configured output artifact is allowed."
+          "task": "Run OCR full review for correctness and maintainability for: {task}\n\nPreview scope (informational; OCR selects files itself):\n{outputs.preview}\n\nRequirements:\n1. `which ocr` must succeed; otherwise fail.\n2. Run workspace review (no --from/--to/--commit):\n   ocr review --audience agent --format json -b \"<user task>\"\n   Pass the user task above as -b, shell-quoted. If the task is empty, omit -b.\n3. Write the complete stdout to the configured output artifact (raw JSON).\n4. Non-zero exit, missing LLM config, or empty/unusable stdout → fail hard. Do not fall back to a manual review.\n5. Do not modify project/source files. Do not apply fixes.\n\nReturn a one-line summary: comment count or failure reason."
         },
         {
           "agent": "reviewer",
@@ -22,17 +48,7 @@
           "output": "reviews/readability.md",
           "outputMode": "file-only",
           "progress": true,
-          "task": "Review the current changes for readability: {task}\n\nInspect the actual diff and code. Report only evidence-backed findings with file/line references: unclear names, confusing control flow, dead code. Do not modify project/source files; returning findings through the configured output artifact is allowed."
-        },
-        {
-          "agent": "reviewer",
-          "phase": "Review",
-          "label": "Maintainability",
-          "as": "reviewMaintainability",
-          "output": "reviews/maintainability.md",
-          "outputMode": "file-only",
-          "progress": true,
-          "task": "Review the current changes for maintainability: {task}\n\nInspect the actual diff and code. Report only evidence-backed findings with file/line references: duplication, coupling, missing tests for changed behavior, hard-to-change structure. Do not modify project/source files; returning findings through the configured output artifact is allowed."
+          "task": "Review readability for: {task}\n\nOnly review these files from OCR preview (do not expand scope):\n{outputs.preview}\n\nInspect the actual diff and code for those paths. Report only evidence-backed findings with file/line references: unclear names, confusing control flow, dead code. Do not modify project/source files; returning findings through the configured output artifact is allowed."
         },
         {
           "agent": "reviewer",
@@ -42,10 +58,10 @@
           "output": "reviews/comments.md",
           "outputMode": "file-only",
           "progress": true,
-          "task": "Review the current changes for unnecessary comments: {task}\n\nInspect the actual diff and code. Report only evidence-backed findings with file/line references for comments that should be removed or trimmed:\n- Restate what the next line already says\n- Narrate the change (\"fix bug\", \"add validation\", \"updated\", \"// implement X\")\n- Obvious from names/types/control flow\n- Stale or wrong relative to the code\n\nDo NOT flag comments that explain non-obvious intent, invariants, tradeoffs, external constraints, or why a surprising approach was chosen. Prefer delete over rewrite. Do not modify project/source files; returning findings through the configured output artifact is allowed."
-        }
+          "task": "Aggressively cull noisy comments for: {task}\n\nOnly review these files from OCR preview (do not expand scope):\n{outputs.preview}\n\nDefault: DELETE. A comment must earn its place. Inspect the actual diff/code for those paths. Report every comment that should be removed (prefer delete over rewrite), with file/line + one-line reason.\n\nDELETE (flag all of these):\n- Restates what the code already says (names, types, signatures, control flow make it obvious)\n- Narrates the change or the next line (\"fix bug\", \"add validation\", \"updated\", \"increment counter\", \"// implement X\", \"// return result\")\n- Section banners / filler / TODOs that add no constraint\n- Stale, wrong, or duplicated comments\n- Explains *what* instead of *why*\n\nKEEP only if it is one of:\n- Non-obvious intent (why this surprising approach)\n- Invariant / contract the code cannot express\n- Footgun / external constraint / compatibility pitfall\n- Tradeoff the reader would otherwise mis-fix\n\nWhen unsure whether it is non-obvious: DELETE. Do not suggest rewriting noise into longer essays. Do not modify project/source files; returning findings through the configured output artifact is allowed."}
       ],
-      "concurrency": 4
+      "concurrency": 3,
+      "failFast": true
     },
     {
       "agent": "oracle",
@@ -54,14 +70,14 @@
       "as": "fixes",
       "output": "fixes.md",
       "progress": true,
-      "task": "Triage these four reviews for: {task}\n\nCorrectness review:\n{outputs.reviewCorrectness}\n\nReadability review:\n{outputs.reviewReadability}\n\nMaintainability review:\n{outputs.reviewMaintainability}\n\nComments review:\n{outputs.reviewComments}\n\nDecide which findings are worth fixing now, which to defer, and which to ignore. For each accepted fix give the exact file, the problem, and the smallest safe change. For comment findings, prefer delete over rewrite; keep only non-obvious intent/invariant/tradeoff/constraint comments. Advisory only; do not modify project/source files."
+      "task": "Triage these reviews for: {task}\n\nOCR review (correctness + maintainability, JSON):\n{outputs.reviewOcr}\n\nReadability review:\n{outputs.reviewReadability}\n\nComments review:\n{outputs.reviewComments}\n\nPolicy:\n- OCR critical/high → accept by default unless clear false positive\n- OCR medium → accept only if small/safe; else defer\n- OCR low → defer/ignore by default\n- Readability: accept clear wins only\n- Comments: default accept deletions; keep only non-obvious intent / contract-invariant / footgun-pitfall / real tradeoff. Reject rewrite-into-essay. When unsure, delete.\n- Duplicate findings at the same location → merge one fix; prefer OCR wording when OCR filed it\n\nFor each accepted fix give exact file, problem, and smallest safe change. Split accepted / deferred / ignored. Advisory only; do not modify project/source files."
     },
     {
       "agent": "worker",
       "phase": "Implementation",
       "label": "Apply fixes",
       "progress": true,
-      "task": "Apply only the accepted fixes from the oracle triage for: {task}\n\n{outputs.fixes}\n\nYou are the sole writer for the project. Do not expand scope beyond the accepted fixes. When removing comments, delete noise only; do not rewrite comments into new essays. Run focused validation and report changed files, commands run with exit codes, failures, and remaining issues."
+      "task": "Apply only the accepted fixes from the oracle triage for: {task}\n\n{outputs.fixes}\n\nYou are the sole writer for the project. Do not expand scope beyond the accepted fixes. If accepted fixes are empty, make no code changes. When removing comments: delete restating/narrating/what-not-why noise; keep only non-obvious intent, contracts/invariants, footguns/pits, real tradeoffs. Do not rewrite noise into essays. When unsure, delete. Run focused validation and report changed files, commands run with exit codes, failures, and remaining issues."
     }
   ]
 }
