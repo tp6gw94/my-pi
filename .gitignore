@@ -14,3 +14,5 @@ web-search.json
 intercom
 *.log
 *.tar
+models-store.json
+review-triage
