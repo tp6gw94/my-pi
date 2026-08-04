@@ -30,7 +30,7 @@ function isQwen(id: string) {
 
 // /models returns only ids; Alibaba publishes specs in docs, not the API.
 const KNOWN_MODELS: Record<string, Omit<ModelSpec, "id">> = {
-	"qwen3.8-max-preview": { reasoning: true, input: ["text"], contextWindow: 1_000_000, maxTokens: 131_072 },
+	"qwen3.8-max": { reasoning: true, input: ["text"], contextWindow: 1_000_000, maxTokens: 131_072 },
 	"qwen3.7-max":         { reasoning: true, input: ["text"], contextWindow: 1_000_000, maxTokens: 65_536 },
 	"qwen3.7-plus":        { reasoning: true, input: ["text"], contextWindow: 1_000_000, maxTokens: 65_536 },
 	"qwen3.6-flash":       { reasoning: true, input: ["text"], contextWindow: 1_000_000, maxTokens: 65_536 },

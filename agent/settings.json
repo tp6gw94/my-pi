@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.82.1",
+  "lastChangelogVersion": "0.83.0",
   "defaultProvider": "supergrok",
   "defaultModel": "grok-4.5",
   "defaultThinkingLevel": "high",
@@ -14,7 +14,8 @@
     "git:github.com/nicobailon/visual-explainer",
     "extensions/supergrok",
     "extensions/ast-grep",
-    "git:github.com/tp6gw94/pi-review-triage@v0.1.4"
+    "git:github.com/tp6gw94/pi-review-triage@v0.1.5",
+    "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.0"
   ],
   "theme": "github-light",
   "subagents": {
@@ -23,14 +24,14 @@
         "model": "opencode-go/deepseek-v4-flash",
         "thinking": "medium",
         "fallbackModels": [
-          "deepinfra/deepseek-ai/DeepSeek-V4-Flash"
+          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ]
       },
       "researcher": {
         "model": "opencode-go/deepseek-v4-flash",
         "thinking": "medium",
         "fallbackModels": [
-          "deepinfra/deepseek-ai/DeepSeek-V4-Flash"
+          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ]
       },
       "planner": {
@@ -42,7 +43,7 @@
         ]
       },
       "reviewer": {
-        "model": "alibabacloud/qwen3.8-max-preview",
+        "model": "alibabacloud/qwen3.8-max",
         "thinking": "high",
         "fallbackModels": [
           "opencode-go/mimo-v2.5-pro",
@@ -50,7 +51,7 @@
         ]
       },
       "oracle": {
-        "model": "alibabacloud/qwen3.8-max-preview",
+        "model": "alibabacloud/qwen3.8-max",
         "thinking": "high",
         "fallbackModels": [
           "opencode-go/mimo-v2.5-pro",
@@ -58,7 +59,7 @@
         ]
       },
       "worker": {
-        "model": "alibabacloud/qwen3.8-max-preview",
+        "model": "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731",
         "thinking": "medium",
         "fallbackModels": [
           "opencode-go/hy3",
@@ -72,7 +73,7 @@
         "model": "opencode-go/hy3",
         "thinking": "medium",
         "fallbackModels": [
-          "alibabacloud/qwen3.8-max-preview",
+          "alibabacloud/qwen3.8-max",
           "deepinfra/tencent/Hy3"
         ]
       }

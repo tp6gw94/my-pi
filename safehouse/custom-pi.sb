@@ -1087,7 +1087,7 @@
     (home-subpath "/.pi")
 )
 
-(allow file-read*
+(allow file-read* file-write*
     (home-subpath "/.opencodereview")
 )
 
