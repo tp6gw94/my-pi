@@ -14,8 +14,8 @@
     "git:github.com/nicobailon/visual-explainer",
     "extensions/supergrok",
     "extensions/ast-grep",
-    "git:github.com/tp6gw94/pi-review-triage@v0.1.5",
-    "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.0"
+    "git:github.com/tp6gw94/pi-review-triage@v0.1.6",
+    "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.1"
   ],
   "theme": "github-light",
   "subagents": {
