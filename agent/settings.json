@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.83.0",
-  "defaultProvider": "supergrok",
-  "defaultModel": "grok-4.5",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-terra",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
@@ -35,17 +35,19 @@
         ]
       },
       "planner": {
-        "model": "opencode-go/kimi-k3",
+        "model": "openai-codex/gpt-5.6-sol",
         "thinking": "high",
         "fallbackModels": [
+	  "opencode-go/kimi-k3",
           "alibabacloud/glm-5.2",
           "deepinfra/XiaomiMiMo/MiMo-V2.5-Pro"
         ]
       },
       "reviewer": {
-        "model": "alibabacloud/qwen3.8-max",
+        "model": "openai-codex/gpt-5.6-sol",
         "thinking": "high",
         "fallbackModels": [
+          "alibabacloud/qwen3.8-max",
           "opencode-go/mimo-v2.5-pro",
           "deepinfra/XiaomiMiMo/MiMo-V2.5-Pro"
         ]
@@ -59,18 +61,18 @@
         ]
       },
       "worker": {
-        "model": "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731",
-        "thinking": "medium",
+        "model": "openai-codex/gpt-5.6-luna",
+        "thinking": "max",
         "fallbackModels": [
-          "opencode-go/hy3",
-          "deepinfra/tencent/Hy3"
+          "opencode-go/deepseek-v4-flash",
+          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ],
         "skills": [
           "ponytail"
         ]
       },
       "context-builder": {
-        "model": "opencode-go/hy3",
+        "model": "opencode-go/deepseek-v4-flash",
         "thinking": "medium",
         "fallbackModels": [
           "alibabacloud/qwen3.8-max",
