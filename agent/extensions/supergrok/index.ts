@@ -1,5 +1,7 @@
-import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent"
-import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai"
+import { getAgentDir, type ExtensionAPI, type ProviderModelConfig } from "@earendil-works/pi-coding-agent"
+import type { Api, Context, Model, RefreshModelsContext, SimpleStreamOptions } from "@earendil-works/pi-ai"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { streamSimpleOpenAIResponses } from "@earendil-works/pi-ai"
 import { loginBrowser, loginDeviceCode, refreshAccessToken, XAI_BASE_URL, type OAuthResult } from "./xai-oauth"
 
@@ -119,8 +121,9 @@ function toProviderModel(m: XaiLanguageModel): ProviderModelConfig {
   }
 }
 
-async function fetchXaiLanguageModels(accessToken: string): Promise<ProviderModelConfig[]> {
+async function fetchXaiLanguageModels(accessToken: string, signal?: AbortSignal): Promise<ProviderModelConfig[]> {
   const response = await fetch(`${XAI_BASE_URL}/language-models`, {
+    signal,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
@@ -144,29 +147,68 @@ function toCredentials(tokens: OAuthResult) {
   }
 }
 
-let discoveredModels: ProviderModelConfig[] | null = null
-let discoveryInFlight: Promise<void> | null = null
+let knownModels = FALLBACK_MODELS
 
-function triggerDiscovery(accessToken: string): void {
-  if (discoveryInFlight || discoveredModels) return
-  discoveryInFlight = fetchXaiLanguageModels(accessToken)
-    .then((models) => {
-      if (models.length > 0) discoveredModels = models
-    })
-    .catch(() => {})
-    .finally(() => {
-      discoveryInFlight = null
-    })
+function cachedModels(models: readonly Model<Api>[]): ProviderModelConfig[] {
+  return models
+    .filter((model) => model.provider === "supergrok" && model.api === "openai-responses")
+    .map(({ provider: _provider, api: _api, baseUrl: _baseUrl, headers: _headers, ...model }) => model)
 }
 
-export default function (pi: ExtensionAPI) {
+function storedModels(models: ProviderModelConfig[]): Model<Api>[] {
+  return models.map((model) => ({ ...model, provider: "supergrok", api: "openai-responses", baseUrl: XAI_BASE_URL }) as Model<Api>)
+}
+
+async function refreshModels(context: RefreshModelsContext): Promise<ProviderModelConfig[]> {
+  const cached = (await context.store.read())?.models
+  if (cached) {
+    const models = cachedModels(cached)
+    if (models.length) knownModels = models
+  }
+  if (!context.allowNetwork || context.signal?.aborted || context.credential?.type !== "oauth") {
+    return knownModels
+  }
+
+  const models = await fetchXaiLanguageModels(context.credential.access, context.signal)
+  if (!models.length) return knownModels
+
+  knownModels = models
+  await context.store.write({ models: storedModels(models), checkedAt: Date.now() })
+  return models
+}
+
+async function loadInitialModels(): Promise<ProviderModelConfig[]> {
+  if (process.env.PI_OFFLINE) return FALLBACK_MODELS
+
+  try {
+    const auth = JSON.parse(await readFile(join(getAgentDir(), "auth.json"), "utf8")) as {
+      supergrok?: { type?: unknown; access?: unknown; expires?: unknown }
+    }
+    const credential = auth.supergrok
+    if (
+      credential?.type !== "oauth" ||
+      typeof credential.access !== "string" ||
+      (typeof credential.expires === "number" && credential.expires <= Date.now())
+    ) return FALLBACK_MODELS
+
+    const models = await fetchXaiLanguageModels(credential.access, AbortSignal.timeout(15_000))
+    return models.length ? models : FALLBACK_MODELS
+  } catch {
+    return FALLBACK_MODELS
+  }
+}
+
+export default async function (pi: ExtensionAPI) {
+  knownModels = await loadInitialModels()
+
   pi.registerProvider("supergrok", {
     name: "Super Grok (xAI OAuth)",
     baseUrl: XAI_BASE_URL,
     api: "openai-responses",
     authHeader: true,
     headers: { "User-Agent": USER_AGENT },
-    models: FALLBACK_MODELS,
+    models: knownModels,
+    refreshModels,
     oauth: {
       name: "xAI Super Grok",
 
@@ -201,24 +243,6 @@ export default function (pi: ExtensionAPI) {
         return credentials.access
       },
 
-      modifyModels(models, credentials) {
-        const typed = models as Model<Api>[]
-        const others = typed.filter((m) => m.provider !== "supergrok")
-        const template = typed.find((m) => m.provider === "supergrok")
-
-        if (credentials.access) triggerDiscovery(credentials.access)
-
-        const source = discoveredModels ?? FALLBACK_MODELS
-        const ours = source.map((m) => ({
-          ...(template ?? {}),
-          ...m,
-          provider: "supergrok",
-          api: (template?.api as Api) ?? "openai-responses",
-          baseUrl: template?.baseUrl ?? XAI_BASE_URL,
-        })) as Model<Api>[]
-
-        return [...others, ...ours]
-      },
     },
     streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions) {
       // Belt: force correct thinkingLevelMap even if discovery/template dropped it.
