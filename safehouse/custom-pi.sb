@@ -649,6 +649,11 @@
     (home-literal "/Library/Application Support")
 )
 
+;; Orca's status extension reads loopback hook coordinates from this file.
+(allow file-read*
+    (home-literal "/Library/Application Support/orca/agent-hooks/endpoint")
+)
+
 ;; ---------------------------------------------------------------------------
 ;; Toolchain: Perl
 ;; Perl runtime, cpan/cpanm, and version-manager paths.

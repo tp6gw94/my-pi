@@ -101,6 +101,49 @@ _detect_main_worktree() {
   fi
 }
 
+APPEND_PATHS=()
+PI_ARGS=()
+while (($# > 0)); do
+  case "$1" in
+    --append-path)
+      if (($# < 2)); then
+        echo "--append-path requires a path" >&2
+        exit 1
+      fi
+      APPEND_PATHS+=("$2")
+      shift 2
+      ;;
+    --append-path=*)
+      APPEND_PATHS+=("${1#--append-path=}")
+      shift
+      ;;
+    --)
+      PI_ARGS+=("$@")
+      break
+      ;;
+    *)
+      PI_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+for i in "${!APPEND_PATHS[@]}"; do
+  path="${APPEND_PATHS[$i]}"
+  if [[ -z "$path" ]]; then
+    echo "--append-path cannot be empty" >&2
+    exit 1
+  fi
+  if [[ "$path" != /* ]]; then
+    path="$WORKDIR/$path"
+  fi
+  if [[ ! -d "$path" ]]; then
+    echo "--append-path must name an existing directory: ${APPEND_PATHS[$i]}" >&2
+    exit 1
+  fi
+  APPEND_PATHS[$i]="$(cd "$path" && pwd -P)"
+done
+
 TMP_POLICY="$(mktemp "${TMPDIR:-/tmp}/safe-pi-policy.XXXXXX")"
 trap 'rm -f "$TMP_POLICY"' EXIT
 
@@ -185,6 +228,24 @@ $(_emit_workdir_ancestors "$WORKDIR")
 EOF
 } >> "$TMP_POLICY"
 
+if ((${#APPEND_PATHS[@]})); then
+  for append_path in "${APPEND_PATHS[@]}"; do
+  {
+    cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Launch-time appended path access
+;; Generated for one --append-path value
+;; ---------------------------------------------------------------------------
+(allow file-read*
+$(_emit_workdir_ancestors "$append_path")
+)
+(allow file-read* file-write* (subpath "$(_sb_escape "$append_path")"))
+EOF
+  } >> "$TMP_POLICY"
+  done
+fi
+
 # When running inside a linked git worktree, also allow read access to the
 # main worktree so cross-worktree diff/inspect workflows can see the baseline.
 MAIN_WORKTREE="$(_detect_main_worktree)"
@@ -252,4 +313,7 @@ _ensure_path_entry /opt/homebrew/sbin
 _ensure_path_entry "$HOME/.local/bin"
 export PATH
 
-exec sandbox-exec -f "$TMP_POLICY" -- pi "$@"
+if ((${#PI_ARGS[@]})); then
+  exec sandbox-exec -f "$TMP_POLICY" -- pi "${PI_ARGS[@]}"
+fi
+exec sandbox-exec -f "$TMP_POLICY" -- pi

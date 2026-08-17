@@ -1,18 +1,16 @@
 {
-  "lastChangelogVersion": "0.83.0",
+  "lastChangelogVersion": "0.84.2",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-terra",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
     "npm:pi-intercom",
-    "npm:pi-web-access",
+    "npm:pi-web-access@0.19.0",
     "npm:pi-mcp-adapter",
     "git:github.com/DietrichGebert/ponytail",
-    "extensions/neuralwatt-provider",
     "extensions/deepinfra-provider",
     "git:github.com/nicobailon/visual-explainer",
-    "extensions/supergrok",
     "extensions/ast-grep",
     "git:github.com/tp6gw94/pi-review-triage@v0.1.6",
     "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.1"
@@ -36,32 +34,32 @@
       },
       "planner": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "high",
+        "thinking": "max",
         "fallbackModels": [
-	  "opencode-go/kimi-k3",
-          "alibabacloud/glm-5.2",
-          "deepinfra/XiaomiMiMo/MiMo-V2.5-Pro"
+          "opencode-go/kimi-k3",
+          "deepinfra/moonshotai/Kimi-K3",
+          "alibabacloud/glm-5.2"
         ]
       },
       "reviewer": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "high",
+        "thinking": "max",
         "fallbackModels": [
           "alibabacloud/qwen3.8-max",
           "opencode-go/mimo-v2.5-pro",
-          "deepinfra/XiaomiMiMo/MiMo-V2.5-Pro"
+          "deepinfra/moonshotai/Kimi-K3"
         ]
       },
       "oracle": {
-        "model": "alibabacloud/qwen3.8-max",
-        "thinking": "high",
+        "model": "openai-codex/gpt-5.6-sol",
+        "thinking": "max",
         "fallbackModels": [
           "opencode-go/mimo-v2.5-pro",
-          "deepinfra/XiaomiMiMo/MiMo-V2.5-Pro"
+          "deepinfra/moonshotai/Kimi-K3"
         ]
       },
       "worker": {
-        "model": "openai-codex/gpt-5.6-luna",
+        "model": "opencode-go/deepseek-v4-flash",
         "thinking": "max",
         "fallbackModels": [
           "opencode-go/deepseek-v4-flash",
