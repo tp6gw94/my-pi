@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.84.2",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-terra",
+  "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
@@ -10,56 +10,56 @@
     "npm:pi-mcp-adapter",
     "git:github.com/DietrichGebert/ponytail",
     "extensions/deepinfra-provider",
-    "git:github.com/nicobailon/visual-explainer",
     "extensions/ast-grep",
     "git:github.com/tp6gw94/pi-review-triage@v0.1.6",
-    "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.1"
+    "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.1",
+    "npm:pi-btw"
   ],
   "theme": "github-light",
   "subagents": {
     "agentOverrides": {
       "scout": {
-        "model": "opencode-go/deepseek-v4-flash",
+        "model": "openai-codex/gpt-5.6-luna",
         "thinking": "medium",
         "fallbackModels": [
+          "opencode-go/deepseek-v4-flash",
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ]
       },
       "researcher": {
-        "model": "opencode-go/deepseek-v4-flash",
+        "model": "openai-codex/gpt-5.6-luna",
         "thinking": "medium",
         "fallbackModels": [
+          "opencode-go/deepseek-v4-flash",
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ]
       },
       "planner": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "max",
+        "thinking": "high",
         "fallbackModels": [
           "opencode-go/kimi-k3",
-          "deepinfra/moonshotai/Kimi-K3",
-          "alibabacloud/glm-5.2"
+          "deepinfra/moonshotai/Kimi-K3"
         ]
       },
       "reviewer": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "max",
+        "thinking": "high",
         "fallbackModels": [
-          "alibabacloud/qwen3.8-max",
           "opencode-go/mimo-v2.5-pro",
           "deepinfra/moonshotai/Kimi-K3"
         ]
       },
       "oracle": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "max",
+        "thinking": "high",
         "fallbackModels": [
           "opencode-go/mimo-v2.5-pro",
           "deepinfra/moonshotai/Kimi-K3"
         ]
       },
       "worker": {
-        "model": "opencode-go/deepseek-v4-flash",
+        "model": "openai-codex/gpt-5.6-luna",
         "thinking": "max",
         "fallbackModels": [
           "opencode-go/deepseek-v4-flash",
@@ -70,10 +70,10 @@
         ]
       },
       "context-builder": {
-        "model": "opencode-go/deepseek-v4-flash",
-        "thinking": "medium",
+        "model": "openai-codex/gpt-5.6-luna",
+        "thinking": "high",
         "fallbackModels": [
-          "alibabacloud/qwen3.8-max",
+          "opencode-go/deepseek-v4-flash",
           "deepinfra/tencent/Hy3"
         ]
       }
