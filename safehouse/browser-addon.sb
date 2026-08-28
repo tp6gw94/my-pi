@@ -11,6 +11,19 @@
 ;; ---------------------------------------------------------------------------
 
 ;; ---------------------------------------------------------------------------
+;; Integration: Ego Lite browser control
+;; ---------------------------------------------------------------------------
+(allow file-read*
+    (literal "/Applications/ego lite.app")
+    (subpath "/Applications/ego lite.app")
+)
+
+(allow mach-lookup
+    (global-name "com.citrolabs.ego.lite.ego-browser")
+    (global-name "org.chromium.Chromium.ego-browser")
+)
+
+;; ---------------------------------------------------------------------------
 ;; Integration: Clipboard (required by macOS GUI)
 ;; ---------------------------------------------------------------------------
 (allow mach-lookup
