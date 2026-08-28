@@ -119,6 +119,8 @@ assert_contains() {
   }
 }
 
+assert_contains "(allow file-read* (subpath \"$HOME/.local/bin\"))" "$CAPTURE_POLICY"
+assert_contains "(allow file-read* file-write* (subpath \"$HOME/.local/share\"))" "$CAPTURE_POLICY"
 assert_contains "(allow file-read* file-write* (subpath \"$escaped_special\"))" "$CAPTURE_POLICY"
 assert_contains "(allow file-read* file-write* (subpath \"$escaped_second\"))" "$CAPTURE_POLICY"
 assert_contains "    (literal \"$escaped_special_parent\")" "$CAPTURE_POLICY"

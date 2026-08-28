@@ -228,6 +228,17 @@ $(_emit_workdir_ancestors "$WORKDIR")
 EOF
 } >> "$TMP_POLICY"
 
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; User-local executables and XDG data access
+;; ---------------------------------------------------------------------------
+(allow file-read* (subpath "$(_sb_escape "$HOME_DIR/.local/bin")"))
+(allow file-read* file-write* (subpath "$(_sb_escape "$HOME_DIR/.local/share")"))
+EOF
+} >> "$TMP_POLICY"
+
 if ((${#APPEND_PATHS[@]})); then
   for append_path in "${APPEND_PATHS[@]}"; do
   {
