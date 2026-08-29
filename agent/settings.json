@@ -29,7 +29,7 @@
     "agentOverrides": {
       "scout": {
         "model": "openai-codex/gpt-5.6-luna",
-        "thinking": "medium",
+        "thinking": "low",
         "fallbackModels": [
           "openai-codex/gpt-5.3-codex-spark",
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
@@ -37,7 +37,7 @@
       },
       "researcher": {
         "model": "openai-codex/gpt-5.6-luna",
-        "thinking": "medium",
+        "thinking": "low",
         "fallbackModels": [
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ]
