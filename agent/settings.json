@@ -5,7 +5,6 @@
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
-    "npm:pi-intercom",
     "npm:pi-web-access@0.19.0",
     "npm:pi-mcp-adapter",
     "git:github.com/DietrichGebert/ponytail",
@@ -17,11 +16,22 @@
   ],
   "theme": "github-light",
   "subagents": {
+    "watchdog": {
+      "enabled": true,
+      "main": {
+        "model": "deepinfra/zai-org/GLM-5.2",
+        "thinking": "heigh"
+      },
+      "scope": {
+        "enabled": true
+      }
+    },
     "agentOverrides": {
       "scout": {
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "medium",
         "fallbackModels": [
+          "openai-codex/gpt-5.3-codex-spark",
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ]
       },
@@ -57,7 +67,9 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "max",
         "fallbackModels": [
-          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
+          "openai-codex/gpt-5.3-codex-spark",
+          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731",
+          "deepinfra/zai-org/GLM-5.3-Flash"
         ],
         "skills": [
           "ponytail"
@@ -67,6 +79,7 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "high",
         "fallbackModels": [
+          "openai-codex/gpt-5.3-codex-spark",
           "deepinfra/tencent/Hy3"
         ]
       }

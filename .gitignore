@@ -16,3 +16,5 @@ intercom
 *.tar
 models-store.json
 review-triage
+missions
+tasks
