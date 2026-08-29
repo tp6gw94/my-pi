@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.84.2",
+  "lastChangelogVersion": "0.84.4",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "high",
@@ -22,7 +22,6 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "medium",
         "fallbackModels": [
-          "opencode-go/deepseek-v4-flash",
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ]
       },
@@ -30,7 +29,6 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "medium",
         "fallbackModels": [
-          "opencode-go/deepseek-v4-flash",
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ]
       },
@@ -38,7 +36,6 @@
         "model": "openai-codex/gpt-5.6-sol",
         "thinking": "high",
         "fallbackModels": [
-          "opencode-go/kimi-k3",
           "deepinfra/moonshotai/Kimi-K3"
         ]
       },
@@ -46,7 +43,6 @@
         "model": "openai-codex/gpt-5.6-sol",
         "thinking": "high",
         "fallbackModels": [
-          "opencode-go/mimo-v2.5-pro",
           "deepinfra/moonshotai/Kimi-K3"
         ]
       },
@@ -54,7 +50,6 @@
         "model": "openai-codex/gpt-5.6-sol",
         "thinking": "high",
         "fallbackModels": [
-          "opencode-go/mimo-v2.5-pro",
           "deepinfra/moonshotai/Kimi-K3"
         ]
       },
@@ -62,7 +57,6 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "max",
         "fallbackModels": [
-          "opencode-go/deepseek-v4-flash",
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
         ],
         "skills": [
