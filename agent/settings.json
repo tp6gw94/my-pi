@@ -20,7 +20,7 @@
       "enabled": true,
       "main": {
         "model": "deepinfra/zai-org/GLM-5.2",
-        "thinking": "heigh"
+        "thinking": "high"
       },
       "scope": {
         "enabled": true
