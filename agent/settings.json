@@ -51,7 +51,7 @@
       },
       "reviewer": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "high",
+        "thinking": "low",
         "fallbackModels": [
           "deepinfra/moonshotai/Kimi-K3"
         ]
