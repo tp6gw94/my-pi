@@ -1,2 +1,2 @@
 - Do not add comments that restate what the code already says.
-- 產出文件與對話使用繁體中文
+- Use Traditional Chinese for all documents delivered to users and in all user communications
