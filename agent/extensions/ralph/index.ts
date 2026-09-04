@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { fileURLToPath } from "node:url"
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -9,6 +10,7 @@ import type {
 const RUN_STATE_TYPE = "ralph:run-state"
 const RUN_STATE_VERSION = 1
 const COMPLETION_MARKER = "<ralph-done>"
+const SKILLS_DIR = fileURLToPath(new URL("./skills", import.meta.url))
 
 type RunStatus = "pending" | "running" | "done" | "max" | "error" | "cancelled" | "session-shutdown"
 
@@ -287,6 +289,8 @@ async function runIteration(
 }
 
 export default function (pi: ExtensionAPI) {
+	pi.on("resources_discover", () => ({ skillPaths: [SKILLS_DIR] }))
+
 	pi.on("session_start", (_event, ctx) => {
 		latestRunState(ctx)
 	})

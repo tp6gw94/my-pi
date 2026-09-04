@@ -56,6 +56,7 @@ function loopHarness(
 	let outputIndex = 0
 	let command: { handler: (args: string, ctx: any) => Promise<void> } | undefined
 	let inputHandler: ((event: any, ctx: any) => Promise<any>) | undefined
+	let resourceHandler: (() => { skillPaths: string[] }) | undefined
 
 	function context(session: FakeSession): any {
 		const value = {
@@ -103,8 +104,9 @@ function loopHarness(
 		appendEntry(customType: string, data: unknown) {
 			sessions[0].appendCustomEntry(customType, data)
 		},
-		on(eventName: string, handler: (event: any, ctx: any) => Promise<any>) {
+		on(eventName: string, handler: any) {
 			if (eventName === "input") inputHandler = handler
+			if (eventName === "resources_discover") resourceHandler = handler
 		},
 		registerCommand(name: string, definition: { handler: (args: string, ctx: any) => Promise<void> }) {
 			assert.equal(name, "ralph")
@@ -113,6 +115,7 @@ function loopHarness(
 	}
 	ralph(pi)
 	assert.ok(command)
+	assert.ok(resourceHandler)
 
 	return {
 		base,
@@ -122,6 +125,7 @@ function loopHarness(
 		notifications,
 		prompts,
 		replacements,
+		resourceHandler: resourceHandler!,
 		sessions,
 	}
 }
@@ -143,6 +147,12 @@ function activeState(): any {
 		status: "running",
 	}
 }
+
+test("discovers the bundled completion skill", () => {
+	const { skillPaths } = loopHarness([]).resourceHandler()
+	assert.equal(skillPaths.length, 1)
+	assert.match(skillPaths[0] ?? "", /ralph\/skills$/)
+})
 
 test("parses exactly a positive maximum and nonempty task remainder", () => {
 	assert.deepEqual(parseRalphArgs("2 inspect the workspace"), {
