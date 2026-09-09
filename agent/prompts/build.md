@@ -1,34 +1,29 @@
 ---
-description: Use one worker to implement, test, verify, and commit incrementally; add auto to execute the full plan
-argument-hint: "[auto]"
+description: Implement the next planned task; add auto or all to run the remaining tasks in order
+argument-hint: "[auto|all]"
 ---
 
-Apply the `incremental-implementation`, `test-driven-development`, and `git-workflow-and-versioning` skills.
+Use `incremental-implementation`, `test-driven-development`, and `git-workflow-and-versioning` guidance only when a needed practice is missing. Keep this template focused; do not reproduce a generic skill's full workflow.
 
 Mode: ${1:-single}
 
 - `/build` completes the next pending task and stops.
-- `/build auto` (`all` is an alias) completes every pending task in dependency order after plan approval.
+- `/build auto` and `/build all` complete every pending task serially in dependency order.
 
-## Shared subagent rules
+## Authority and delegation
 
-1. Call `subagent({ action: "list" })` and use only executable, enabled agents.
-2. The parent retains requirements, approval, scope, and final acceptance. Delegate implementation to one asynchronous `worker` with the required skills. Never run a second writer in the same cwd, and do not allow the child to launch subagents.
-3. The worker's cold-start packet must include the cwd/ref, specification and plan paths, exact task scope, allowed and forbidden files, acceptance criteria, RED/GREEN/REFACTOR expectations, repository-specific validation commands, commit authority, output format, and stop conditions.
-4. For each task, the worker reads the acceptance criteria, writes and confirms a failing test, makes the minimum implementation pass, runs focused tests, then the full suite and applicable build/typecheck/lint commands. It updates task status, stages only files from that task plus its status update, and creates one descriptive commit.
-5. The worker reports completed tasks, changed files, RED/GREEN evidence, commands and results, commits, remaining work, and risks. The parent inspects git status, the final diff, and the evidence before declaring completion.
+The parent owns requirements, approval, scope, authorization, and final acceptance. It may work directly or delegate according to task size and risk.
 
-## `/build`
+When delegating, first call the actual `subagent({ action: "list" })` contract and select only executable, enabled agents. Use a direct child call with `async: true` for one bounded stage; use one top-level `workflowScript` with stable keys and `async: true` only for genuinely multi-stage work. Provide a cold-start packet with cwd/ref, specification and plan paths, exact scope, allowed and forbidden files, acceptance criteria, validation commands, RED/GREEN expectations where relevant, commit authority, output format, and escalation rules. Keep one writer in a shared cwd at a time; delegated children do not launch nested agents. Use read-only context or validation help only when it adds value.
 
-After the parent confirms that unrelated working-tree changes cannot be absorbed into the commit, launch one asynchronous `worker` for the next pending task. Stop when that task is complete.
+A child reports evidence or a blocker to the parent. The parent resolves it within the existing authorization; only the parent asks the user when no safe, reversible next step exists. Respect an explicit request to discuss before changing anything.
 
-## `/build auto`
+## Execution
 
-1. Require a specification at `SPEC.md`, `docs/SPEC.md`, or under `spec/*`. If none exists, stop and ask the user to run `/spec`.
-2. Run `git status --porcelain`. If uncommitted changes exist outside expected specification or planning artifacts, ask the user whether to commit, stash, or otherwise handle them.
-3. If `tasks/plan.md` is missing, generate it through the `/planning` subagent workflow.
-4. Present the complete plan and obtain one explicit approval. Do not launch the implementation worker before approval.
-5. After approval, launch one asynchronous `worker`. If this run created or changed planning files, the worker first commits only those artifacts as a preparatory commit, then executes pending tasks serially. Never fan out writers. Keep independent validation and one commit per task.
-6. The worker must stop and ask the parent when tests or builds cannot pass, the specification is ambiguous, or work reaches authentication, payments, destructive migrations, deletion, deployment, secrets, or another high-risk or irreversible action. Resume from the next pending task after the decision.
+1. Use the current request, available specification/plan, and repository evidence. Validate evidence against the current HEAD, working tree, configuration, and environment rather than trusting HEAD or stale summaries. Reuse existing data and record reasonable assumptions instead of repeating questions. For `auto`/`all`, reuse an approved plan when available; if none exists, derive a bounded plan from available inputs and seek approval only when execution would broaden the authorized scope.
+2. Inspect status and preserve unrelated user changes. Treat a dirty tree as input: isolate this task in the diff and do not overwrite, commit, or stash other work.
+3. Implement the smallest in-scope change. Local code changes in sensitive modules may proceed under the authorization; obtain explicit authorization before push, deploy, or any other external, irreversible, or hard-to-revert effect. Running `/build` alone does not grant that authority.
+4. Validate changed behavior with focused checks first. Integrate the full suite and applicable build, typecheck, or lint checks at risk-based integration points rather than after every small step. A failed check is evidence to diagnose and repair, narrow, or report; continue only when the remaining path is safe and acceptance is still supported.
+5. Update only the task status and planning artifacts required by the existing workflow. Do not create a commit by default. An explicit commit request grants task-scoped commit authority; report the commit and keep unrelated changes untouched.
 
-Use a direct child call for one implementation task. If one wave genuinely requires multiple coordinated stages, use exactly one top-level `workflowScript` with stable keys and `async: true`, while keeping writers serialized.
+Report completed tasks, changed files, RED/GREEN evidence, commands and results, omitted full-suite or relevant checks with reasons and residual risks, commits (if explicitly authorized), remaining work, assumptions, and risks. For `auto`/`all`, process all pending tasks in order and report any task that remains incomplete.

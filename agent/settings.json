@@ -14,6 +14,11 @@
     "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.1",
     "npm:pi-btw"
   ],
+  "skills": [
+    "-skills/interview-me/SKILL.md",
+    "-skills/do-i-understand/SKILL.md",
+    "-skills/using-agent-skills/SKILL.md"
+  ],
   "theme": "github-light",
   "subagents": {
     "watchdog": {
