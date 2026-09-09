@@ -1001,6 +1001,14 @@
     (home-subpath "/.local/state/glab-cli")  ;; glab runtime state files.
 )
 
+
+;; ---------------------------------------------------------------------------
+;; Integration: hunk tool
+;; ---------------------------------------------------------------------------
+(allow file-read* file-write*
+    (home-subpath "/.hunk")
+)
+
 ;; ---------------------------------------------------------------------------
 ;; Integration: SSH Agent Default Deny
 ;; Default-deny SSH agent unix sockets; ssh integration can re-open later.
@@ -1116,3 +1124,4 @@
     (home-literal "/.ssh/config")
     (home-literal "/.ssh/known_hosts")
 )
+
