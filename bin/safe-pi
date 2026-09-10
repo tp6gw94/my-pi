@@ -52,52 +52,194 @@ _emit_workdir_ancestors() {
   fi
 }
 
+# Paths containing control characters cannot be represented safely by the
+# generated SBPL and are rejected instead of interpolated.
+_path_has_unsafe_chars() {
+  case "$1" in
+    *[[:cntrl:]]*) return 1 ;;
+  esac
+}
+
+# Preserve command status and trailing newlines while reading one Git path.
+_git_value() {
+  local value
+
+  value="$(
+    set +e
+    command git "$@"
+    status=$?
+    printf '\001'
+    exit "$status"
+  )" || return 1
+
+  case "$value" in
+    *$'\001') ;;
+    *) return 1 ;;
+  esac
+  value="${value%$'\001'}"
+  value="${value%$'\n'}"
+  _path_has_unsafe_chars "$value" || return 1
+  printf '%s' "$value"
+}
+
+_canonical_dir() {
+  local value
+
+  [[ -d "$1" ]] || return 1
+  value="$(
+    cd "$1" 2>/dev/null || exit 1
+    pwd -P || exit 1
+    printf '\001'
+  )" || return 1
+
+  case "$value" in
+    *$'\001') ;;
+    *) return 1 ;;
+  esac
+  value="${value%$'\001'}"
+  value="${value%$'\n'}"
+  _path_has_unsafe_chars "$value" || return 1
+  printf '%s' "$value"
+}
+
+_detect_current_worktree_root() {
+  local root
+
+  root="$(_git_value rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
+  if [[ -z "$root" ]]; then
+    root="$(_git_value rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
+  [[ -n "$root" ]] || return 0
+  _canonical_dir "$root"
+}
+
 # Absolute path of the shared git common dir, or empty if not in a repo.
 # Needed so commit/reset/av can write refs/objects when .git lives outside WORKDIR
 # (linked worktree, or safe-pi launched from a subdirectory).
 _detect_git_common_dir() {
   local d
 
-  d="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  d="$(_git_value rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   if [[ -z "$d" ]]; then
-    d="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+    d="$(_git_value rev-parse --git-common-dir 2>/dev/null || true)"
     if [[ -n "$d" && "$d" != /* ]]; then
-      d="$(pwd -P)/$d"
+      d="$WORKDIR/$d"
     fi
   fi
 
-  if [[ -n "$d" && -d "$d" ]]; then
-    (cd "$d" && pwd -P)
-  fi
+  [[ -n "$d" ]] || return 0
+  _canonical_dir "$d" || return 0
 }
 
-# If the current directory is a linked git worktree, print the absolute path
-# of the main (original) worktree. Returns nothing for normal checkouts,
-# bare repos, or when git is unavailable.
-_detect_main_worktree() {
-  local git_dir git_common_dir superproject main_worktree
+_candidate_git_common_dir() {
+  local candidate="$1" candidate_root="$2" d
 
-  git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
-  git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
-  superproject="$(git rev-parse --show-superproject-working-tree 2>/dev/null || true)"
+  d="$(_git_value -C "$candidate" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [[ -z "$d" ]]; then
+    d="$(_git_value -C "$candidate" rev-parse --git-common-dir 2>/dev/null || true)"
+    if [[ -n "$d" && "$d" != /* ]]; then
+      d="$candidate_root/$d"
+    fi
+  fi
 
-  # Same git-dir and common-dir means a normal checkout (or submodule).
-  # A non-empty superproject path means we are inside a submodule, not a worktree.
-  if [[ -z "$git_dir" || -z "$git_common_dir" || "$git_dir" == "$git_common_dir" || -n "$superproject" ]]; then
+  [[ -n "$d" ]] || return 1
+  _canonical_dir "$d"
+}
+
+_consider_worktree_record() {
+  local path="$1" bare="$2" prunable="$3"
+  local candidate candidate_root candidate_common
+  local current_root="$4" source_common="$5"
+
+  [[ "$bare" -eq 0 && "$prunable" -eq 0 ]] || return 0
+  [[ -n "$path" && "$path" == /* ]] || return 0
+  if ! _path_has_unsafe_chars "$path"; then
+    echo "safe-pi: skipping a Git worktree with an unsafe path" >&2
+    return 0
+  fi
+  candidate="$(_canonical_dir "$path" 2>/dev/null || true)"
+  [[ -n "$candidate" ]] || return 0
+  [[ "$candidate" != "$current_root" ]] || return 0
+
+  candidate_root="$(_git_value -C "$candidate" rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
+  if [[ -z "$candidate_root" ]]; then
+    candidate_root="$(_git_value -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
+  candidate_root="$(_canonical_dir "$candidate_root" 2>/dev/null || true)"
+  [[ -n "$candidate_root" && "$candidate_root" == "$candidate" ]] || return 0
+
+  candidate_common="$(_candidate_git_common_dir "$candidate" "$candidate_root" 2>/dev/null || true)"
+  [[ -n "$candidate_common" && "$candidate_common" == "$source_common" ]] || return 0
+
+  local existing
+  if ((${#WORKTREE_PATHS[@]})); then
+    for existing in "${WORKTREE_PATHS[@]}"; do
+      [[ "$existing" == "$candidate" ]] && return 0
+    done
+  fi
+  WORKTREE_PATHS+=("$candidate")
+}
+
+# Snapshot all valid worktrees belonging to the current repository. New RO
+# grants apply on restart, do not revoke existing RW grants, and Git common
+# metadata remains RW for normal Git operations (not a full Git isolation).
+_detect_worktree_paths() {
+  local current_root source_common superproject snapshot
+  local field record_path record_has_path record_bare record_prunable
+  local snapshot_valid saw_record
+
+  WORKTREE_PATHS=()
+  current_root="$(_detect_current_worktree_root 2>/dev/null || true)"
+  [[ -n "$current_root" ]] || return 0
+  superproject="$(_git_value rev-parse --show-superproject-working-tree 2>/dev/null || true)"
+  [[ -z "$superproject" ]] || return 0
+  source_common="$(_detect_git_common_dir 2>/dev/null || true)"
+  [[ -n "$source_common" ]] || return 0
+
+  snapshot="$(mktemp "${TMPDIR:-/tmp}/safe-pi-worktrees.XXXXXX")" || return 0
+  if ! command git worktree list --porcelain -z > "$snapshot" 2>/dev/null; then
+    rm -f "$snapshot"
+    echo "safe-pi: Git worktree snapshot unavailable; skipping additional worktree access" >&2
     return 0
   fi
 
-  # The first entry from `git worktree list --porcelain` is always the main worktree.
-  main_worktree="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree / {print $2; exit}')"
+  record_path=""
+  record_has_path=0
+  record_bare=0
+  record_prunable=0
+  snapshot_valid=1
+  saw_record=0
+  while IFS= read -r -d '' field; do
+    if [[ -z "$field" ]]; then
+      if [[ "$record_has_path" -eq 0 || -z "$record_path" ]]; then
+        snapshot_valid=0
+      else
+        saw_record=1
+        _consider_worktree_record "$record_path" "$record_bare" "$record_prunable" "$current_root" "$source_common"
+      fi
+      record_path=""
+      record_has_path=0
+      record_bare=0
+      record_prunable=0
+    elif [[ "$field" == worktree\ * ]]; then
+      if [[ "$record_has_path" -ne 0 ]]; then
+        snapshot_valid=0
+      fi
+      record_path="${field#worktree }"
+      record_has_path=1
+    elif [[ "$field" == bare ]]; then
+      record_bare=1
+    elif [[ "$field" == prunable\ * || "$field" == prunable ]]; then
+      record_prunable=1
+    fi
+  done < "$snapshot"
+  rm -f "$snapshot"
 
-  # Fallback for unusual git-dir layouts: the main checkout usually sits
-  # directly above the shared common git dir.
-  if [[ -z "$main_worktree" ]]; then
-    main_worktree="${git_common_dir%/*}"
-  fi
-
-  if [[ -n "$main_worktree" && -d "$main_worktree" ]]; then
-    (cd "$main_worktree" && pwd -P)
+  [[ -z "$field" && "$record_has_path" -eq 0 ]] || snapshot_valid=0
+  [[ "$saw_record" -ne 0 ]] || snapshot_valid=0
+  if [[ "$snapshot_valid" -eq 0 ]]; then
+    WORKTREE_PATHS=()
+    echo "safe-pi: incomplete Git worktree snapshot; skipping additional worktree access" >&2
   fi
 }
 
@@ -141,7 +283,7 @@ for i in "${!APPEND_PATHS[@]}"; do
     echo "--append-path must name an existing directory: ${APPEND_PATHS[$i]}" >&2
     exit 1
   fi
-  APPEND_PATHS[$i]="$(cd "$path" && pwd -P)"
+  APPEND_PATHS[i]="$(cd "$path" && pwd -P)"
 done
 
 TMP_POLICY="$(mktemp "${TMPDIR:-/tmp}/safe-pi-policy.XXXXXX")"
@@ -257,23 +399,26 @@ EOF
   done
 fi
 
-# When running inside a linked git worktree, also allow read access to the
-# main worktree so cross-worktree diff/inspect workflows can see the baseline.
-MAIN_WORKTREE="$(_detect_main_worktree)"
-if [[ -n "$MAIN_WORKTREE" ]]; then
-{
-  cat <<EOF
+# Snapshot valid worktrees from this repository and grant each non-current
+# worktree read-only access. The snapshot is taken at launch, so new worktrees
+# require a restart; existing WORKDIR/append-path RW grants remain unchanged.
+_detect_worktree_paths
+if ((${#WORKTREE_PATHS[@]})); then
+  for worktree_path in "${WORKTREE_PATHS[@]}"; do
+  {
+    cat <<EOF
 
 ;; ---------------------------------------------------------------------------
-;; Main worktree read access (linked worktree detected)
-;; Main worktree: ${MAIN_WORKTREE}
+;; Other worktree read access (launch-time snapshot)
+;; Worktree: ${worktree_path}
 ;; ---------------------------------------------------------------------------
 (allow file-read*
-$(_emit_workdir_ancestors "$MAIN_WORKTREE")
+$(_emit_workdir_ancestors "$worktree_path")
 )
-(allow file-read* (subpath "$(_sb_escape "$MAIN_WORKTREE")"))
+(allow file-read* (subpath "$(_sb_escape "$worktree_path")"))
 EOF
-} >> "$TMP_POLICY"
+  } >> "$TMP_POLICY"
+  done
 fi
 
 # RW on shared git metadata so reset/commit/amend/av restack/pr can update

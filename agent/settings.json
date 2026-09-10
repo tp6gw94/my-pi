@@ -12,7 +12,8 @@
     "extensions/ast-grep",
     "git:github.com/tp6gw94/pi-review-triage@v0.1.6",
     "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.1",
-    "npm:pi-btw"
+    "npm:pi-btw",
+    "https://github.com/cathrynlavery/diagram-design"
   ],
   "skills": [
     "-skills/interview-me/SKILL.md",
@@ -72,8 +73,8 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "max",
         "fallbackModels": [
-          "openai-codex/gpt-5.3-codex-spark",
           "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731",
+          "openai-codex/gpt-5.3-codex-spark",
           "deepinfra/zai-org/GLM-5.3-Flash"
         ],
         "skills": [
@@ -84,6 +85,8 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "high",
         "fallbackModels": [
+          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731",
+          "deepinfra/zai-org/GLM-5.3-Flash",
           "openai-codex/gpt-5.3-codex-spark",
           "deepinfra/tencent/Hy3"
         ]
