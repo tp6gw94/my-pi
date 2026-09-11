@@ -38,14 +38,14 @@
         "thinking": "low",
         "fallbackModels": [
           "openai-codex/gpt-5.3-codex-spark",
-          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
+          "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash"
         ]
       },
       "researcher": {
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "low",
         "fallbackModels": [
-          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731"
+          "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash"
         ]
       },
       "planner": {
@@ -73,7 +73,7 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "max",
         "fallbackModels": [
-          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731",
+          "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
           "openai-codex/gpt-5.3-codex-spark",
           "deepinfra/zai-org/GLM-5.3-Flash"
         ],
@@ -85,7 +85,7 @@
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "high",
         "fallbackModels": [
-          "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731",
+          "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
           "deepinfra/zai-org/GLM-5.3-Flash",
           "openai-codex/gpt-5.3-codex-spark",
           "deepinfra/tencent/Hy3"
