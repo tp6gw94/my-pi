@@ -1,6 +1,18 @@
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
 const BASE_URL = "https://api.deepinfra.com/v1/openai";
+const DEEPSEEK_V41_FLASH_MODEL_ID = "deepseek-ai/DeepSeek-V4.1-Flash";
+
+export function withDeepInfraPriority(payload: unknown): unknown {
+	if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+		return payload;
+	}
+
+	const request = payload as Record<string, unknown>;
+	if (request.model !== DEEPSEEK_V41_FLASH_MODEL_ID) return payload;
+
+	return { ...request, service_tier: "priority" };
+}
 
 interface DeepInfraModelMetadata {
 	description?: string;
@@ -146,6 +158,13 @@ const FALLBACK_MODELS: ProviderModelConfig[] = [
 ];
 
 export default async function (pi: ExtensionAPI) {
+	pi.on("before_provider_request", (event, ctx) => {
+		if (ctx.model?.provider !== "deepinfra" || ctx.model.id !== DEEPSEEK_V41_FLASH_MODEL_ID) return;
+
+		const nextPayload = withDeepInfraPriority(event.payload);
+		return nextPayload === event.payload ? undefined : nextPayload;
+	});
+
 	const apiKey = process.env.DEEPINFRA_API_KEY;
 
 	let models: ProviderModelConfig[];

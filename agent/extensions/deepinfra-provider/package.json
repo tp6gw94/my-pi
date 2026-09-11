@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": {},
+  "scripts": {
+    "test": "node --experimental-strip-types --test test.mjs"
+  },
   "pi": {
     "extensions": [
       "./index.ts"
