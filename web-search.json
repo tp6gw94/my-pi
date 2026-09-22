@@ -2,12 +2,22 @@
   "exaApiKey": "$EXA_API_KEY",
   "summaryModel": "opencode-go/deepseek-v4.1-flash:low",
   "searchRouting": {
-    "providers": ["exa"],
+    "providers": [
+      "exa"
+    ],
     "useCurrentModel": false,
-    "fallbackOn": ["transient", "quota", "network", "invalid-response"]
+    "fallbackOn": [
+      "transient",
+      "quota",
+      "network",
+      "invalid-response"
+    ]
   },
   "webSearch": {
     "enabled": true,
-    "allowedProviders": ["exa"]
-  }
+    "allowedProviders": [
+      "exa"
+    ]
+  },
+  "workflow": "auto-summary"
 }
