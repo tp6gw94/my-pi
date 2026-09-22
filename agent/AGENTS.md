@@ -1,2 +1,3 @@
+- Write code, skills, AGENTS.md files, configs, and commits in English.
+- Write documents handed to the user, and all user communications, in Traditional Chinese.
 - Do not add comments that restate what the code already says.
-- Use Traditional Chinese for all documents delivered to users and in all user communications
