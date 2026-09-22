@@ -16,6 +16,10 @@ type RawModel = {
   modalities?: { input?: string[] };
   limit?: { context?: number; output?: number };
   cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+  // Models.dev marks models that expect the reasoning trace echoed back on
+  // every assistant message: `{ "field": "reasoning_content" }` (or the field
+  // name as a bare string / the boolean form when no field name is known).
+  interleaved?: boolean | string | { field?: string };
 };
 
 type ZenApi = "openai-responses" | "anthropic-messages" | "openai-completions";
@@ -39,9 +43,27 @@ function thinkMap(m: RawModel) {
   return supportsMax ? { ...DEFAULT_THINK, xhigh: "max" } : { ...DEFAULT_THINK };
 }
 
-function compatFor(id: string, api: ZenApi): ProviderModelConfig["compat"] {
+function interleavedField(m: Pick<RawModel, "interleaved">): string | undefined {
+  const raw = m.interleaved;
+  if (typeof raw === "string") return raw;
+  return typeof raw === "object" ? raw?.field : undefined;
+}
+
+function compatFor(m: Pick<RawModel, "id" | "interleaved">, api: ZenApi): ProviderModelConfig["compat"] {
   const compat: ProviderModelConfig["compat"] = { supportsDeveloperRole: api === "openai-responses" };
-  if (id.startsWith("deepseek")) compat.thinkingFormat = "deepseek";
+  if (m.id.startsWith("deepseek")) compat.thinkingFormat = "deepseek";
+  // Thinking-mode upstreams (DeepSeek, GLM, Kimi, MiMo, LongCat, ...) 400 with
+  // "The `reasoning_content` in the thinking mode must be passed back to the
+  // API" when an assistant message in the history omits reasoning_content.
+  // pi only auto-detects that from provider/baseUrl deepseek.com, which
+  // opencode.ai never matches, so we take the signal from the catalog instead
+  // (deepseek by id as a fallback when the catalog is unreachable).
+  if (
+    api === "openai-completions" &&
+    (interleavedField(m) === "reasoning_content" || m.id.startsWith("deepseek"))
+  ) {
+    compat.requiresReasoningContentOnAssistantMessages = true;
+  }
   return compat;
 }
 
@@ -63,7 +85,7 @@ function toConfig(m: RawModel, api: ZenApi): ProviderModelConfig {
       cacheRead: cost.cache_read ?? 0,
       cacheWrite: cost.cache_write ?? 0,
     },
-    compat: compatFor(m.id, api),
+    compat: compatFor(m, api),
   };
   if (cfg.reasoning) cfg.thinkingLevelMap = thinkMap(m);
   return cfg;
@@ -80,7 +102,7 @@ function defaultConfig(id: string, api: ZenApi): ProviderModelConfig {
     contextWindow: 200000,
     maxTokens: 32768,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    compat: compatFor(id, api),
+    compat: compatFor({ id }, api),
     thinkingLevelMap: { ...DEFAULT_THINK },
   };
 }

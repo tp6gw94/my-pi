@@ -1,0 +1,11 @@
+;; ---------------------------------------------------------------------------
+;; Pi XDG config addon (local)
+;; Grants the ~/.config/pi directory, where XDG-aware Pi extensions keep state.
+;; custom-pi.sb only allows the ~/.config directory itself, so reading a file
+;; below it fails with EPERM. pi-web-access resolves web-search.json from
+;; $XDG_CONFIG_HOME/pi before ~/.pi, which is why it needs this grant.
+;; ---------------------------------------------------------------------------
+
+(allow file-read* file-write*
+    (home-subpath "/.config/pi")
+)

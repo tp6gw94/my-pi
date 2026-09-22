@@ -10,6 +10,7 @@ BASE_PROFILE="${BASE_PROFILE:-$HOME/.pi/safehouse/custom-pi.sb}"
 BROWSER_ADDON="${BROWSER_ADDON:-$HOME/.pi/safehouse/browser-addon.sb}"
 KEYCHAIN_ADDON="${KEYCHAIN_ADDON:-$HOME/.pi/safehouse/keychain-addon.sb}"
 EMACS_ADDON="${EMACS_ADDON:-$HOME/.pi/safehouse/emacs-addon.sb}"
+PI_XDG_ADDON="${PI_XDG_ADDON:-$HOME/.pi/safehouse/pi-xdg-addon.sb}"
 
 if [[ ! -f "$BASE_PROFILE" ]]; then
   echo "Base profile not found: $BASE_PROFILE" >&2
@@ -340,6 +341,20 @@ if [[ -f "$EMACS_ADDON" ]]; then
 ;; ---------------------------------------------------------------------------
 EOF
   cat "$EMACS_ADDON"
+} >> "$TMP_POLICY"
+fi
+
+# XDG config dir used by Pi extensions (e.g. pi-web-access web-search.json).
+if [[ -f "$PI_XDG_ADDON" ]]; then
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Pi XDG config addon (loaded by default if the addon file exists)
+;; Source: ${PI_XDG_ADDON}
+;; ---------------------------------------------------------------------------
+EOF
+  cat "$PI_XDG_ADDON"
 } >> "$TMP_POLICY"
 fi
 
