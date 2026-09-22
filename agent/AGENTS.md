@@ -1,3 +1,3 @@
 - Write code, skills, AGENTS.md files, configs, and commits in English.
 - Write documents handed to the user, and all user communications, in Traditional Chinese.
-- Do not add comments that restate what the code already says.
+- Do not add comments that restate what the code already says or narrate past behavior — git log has that.
