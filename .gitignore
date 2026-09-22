@@ -10,7 +10,6 @@ docker-pi-kit/kit/files/home/.pi/agent
 docker-pi-kit/kit/files/home/.agents
 memory
 run-history.jsonl
-web-search.json
 intercom
 *.log
 *.tar
