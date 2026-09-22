@@ -1,24 +1,18 @@
 {
   "lastChangelogVersion": "0.84.4",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6-astra",
-  "defaultThinkingLevel": "medium",
+  "defaultProvider": "opencode-go",
+  "defaultModel": "deepseek-v4.1-flash",
+  "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
     "npm:pi-web-access@0.19.0",
     "npm:pi-mcp-adapter",
     "git:github.com/DietrichGebert/ponytail",
     "extensions/deepinfra-provider",
-    "extensions/ast-grep",
     "git:github.com/tp6gw94/pi-review-triage@v0.1.6",
     "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.1",
     "npm:pi-btw",
     "https://github.com/cathrynlavery/diagram-design"
-  ],
-  "skills": [
-    "-skills/interview-me/SKILL.md",
-    "-skills/do-i-understand/SKILL.md",
-    "-skills/using-agent-skills/SKILL.md"
   ],
   "theme": "github-light",
   "subagents": {
@@ -50,21 +44,21 @@
         ]
       },
       "planner": {
-        "model": "openai-codex/gpt-6-astra",
+        "model": "opencode-go/opencode-go/mimo-v2.6-pro",
         "thinking": "medium",
         "fallbackModels": [
           "deepinfra/moonshotai/Kimi-K3"
         ]
       },
       "reviewer": {
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "low",
+        "model": "opencode-zen-compat/muse-spark-1.3-contributor-free",
+        "thinking": "high",
         "fallbackModels": [
           "deepinfra/moonshotai/Kimi-K3"
         ]
       },
       "oracle": {
-        "model": "openai-codex/gpt-5.6-sol",
+        "model": "opencode-go/deepseek-v4.1-flash",
         "thinking": "high",
         "fallbackModels": [
           "deepinfra/moonshotai/Kimi-K3"
@@ -83,8 +77,8 @@
         ]
       },
       "context-builder": {
-        "model": "openai-codex/gpt-5.6-luna",
-        "thinking": "high",
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "thinking": "low",
         "fallbackModels": [
           "deepinfra/deepseek-ai/DeepSeek-V4.1-Flash",
           "deepinfra/zai-org/GLM-5.3-Flash"
