@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.87.1",
-  "defaultProvider": "opencode-go",
-  "defaultModel": "deepseek-v4.1-flash",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-6.1-sol",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
@@ -17,7 +17,7 @@
   "theme": "github-light",
   "subagents": {
     "watchdog": {
-      "enabled": true,
+      "enabled": false,
       "main": {
         "model": "deepinfra/zai-org/GLM-5.3",
         "thinking": "high"
@@ -36,15 +36,15 @@
         "thinking": "low"
       },
       "planner": {
-        "model": "openai-codex/gpt-6-sol",
+        "model": "openai-codex/gpt-6.1-sol",
         "thinking": "high"
       },
       "reviewer": {
-        "model": "openai-codex/gpt-6-sol",
+        "model": "openai-codex/gpt-6.1-sol",
         "thinking": "high"
       },
       "oracle": {
-        "model": "openai-codex/gpt-6-sol",
+        "model": "openai-codex/gpt-6.1-sol",
         "thinking": "high"
       },
       "worker": {
