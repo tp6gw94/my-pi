@@ -1,0 +1,72 @@
+;; Docker addon for custom-pi.sb, loaded AFTER its container socket denies.
+;; Copied from Agent Safehouse 0.11.1's embedded
+;; profiles/55-integrations-optional/docker.sb (Homebrew bin/safehouse).
+;; Source: https://github.com/eugene1g/agent-safehouse/blob/v0.11.1/profiles/55-integrations-optional/docker.sb
+;; Daemon access intentionally grants powerful host capabilities, including
+;; container bind mounts outside the sandbox's allowed filesystem paths.
+
+;; ---------------------------------------------------------------------------
+;; Integration: Docker
+;; Docker daemon socket access for container operations. High-risk.
+;; Source: 55-integrations-optional/docker.sb
+;; ---------------------------------------------------------------------------
+
+(allow file-read* file-write*
+    (literal "/var/run/docker.sock")                                       ;; Standard Docker daemon socket path.
+    (literal "/private/var/run/docker.sock")                               ;; macOS backing path for /var/run/docker.sock.
+    (home-literal "/.docker/run/docker.sock")                              ;; Docker Desktop user-scoped socket path.
+    (home-literal "/.orbstack/run/docker.sock")                            ;; OrbStack user-scoped daemon socket path.
+    (home-subpath "/.docker")                                              ;; Docker CLI config, contexts, plugins, buildx state.
+    (home-subpath "/.colima")                                              ;; Colima runtime state (VM, socket, and instance metadata).
+    (home-literal "/.rd/docker.sock")                                      ;; Rancher Desktop socket.
+
+    ;; Podman equivalents of the Docker re-opens above (mirrors the deny block
+    ;; in container-runtime-default-deny.sb). Podman is Docker-API compatible,
+    ;; so it is covered by the same --enable=docker integration.
+    (literal "/var/run/podman/podman.sock")                                ;; System-level Podman API socket.
+    (literal "/private/var/run/podman/podman.sock")                        ;; macOS backing path for /var/run/podman/podman.sock.
+    (home-subpath "/.local/share/containers")                              ;; Podman machine state, sockets, and instance metadata.
+    (home-subpath "/.config/containers")                                   ;; Podman machine config and connection sockets.
+)
+
+;; Re-allow connect() on Docker unix sockets (matches the network-outbound deny
+;; in container-runtime-default-deny.sb).
+(allow network-outbound
+    (remote unix-socket (path-literal "/var/run/docker.sock"))
+    (remote unix-socket (path-literal "/private/var/run/docker.sock"))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.docker/run/docker\\.sock$")))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.orbstack/run/docker\\.sock$")))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.colima/docker\\.sock$")))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.colima/[^/]+/docker\\.sock$")))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.rd/docker\\.sock$")))
+
+    ;; Podman equivalents of the Docker re-opens above (mirrors the deny block
+    ;; in container-runtime-default-deny.sb).
+    (remote unix-socket (path-literal "/var/run/podman/podman.sock"))
+    (remote unix-socket (path-literal "/private/var/run/podman/podman.sock"))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.local/share/containers/podman/machine/podman\\.sock$")))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.local/share/containers/podman/machine/[^/]+/podman\\.sock$")))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.config/containers/podman/machine/podman\\.sock$")))
+    (remote unix-socket (path-regex (string-append "^" HOME_DIR "/\\.config/containers/podman/machine/[^/]+/podman\\.sock$")))
+)
+
+;; Docker Desktop — CLI binary and shared resources.
+;; The standard Homebrew/core dump path `/usr/local/bin/docker` on Intel Macs
+;; and `/opt/homebrew/bin/docker` on Apple Silicon are symlinks into the
+;; Docker.app bundle; the symlink itself may be readable but the target binary
+;; is not, so we grant file-read* for the entire bundle tree.
+(allow file-read*
+    (literal "/Applications")
+    (subpath "/Applications/Docker.app")                                 ;; Docker Desktop CLI binary and bundled tools.
+
+    ;; Compatibility alias on Intel Macs where /Applications lives under
+    ;; /System/Volumes/Data.
+    (literal "/System/Volumes/Data")
+    (literal "/System/Volumes/Data/Applications")
+    (subpath "/System/Volumes/Data/Applications/Docker.app")
+)
+
+;; OrbStack (Docker Desktop alternative) — shell completions and CLI helpers.
+(allow file-read*
+    (subpath "/Applications/OrbStack.app/Contents/Resources/completions")  ;; Zsh/bash completions sourced during shell init.
+)

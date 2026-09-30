@@ -3,14 +3,15 @@ set -euo pipefail
 
 # Custom sandbox wrapper for Pi.
 # Mirrors Agent Safehouse assembly but uses a static base profile, appends
-# the browser addon by default, and appends the invocation directory as a
-# read/write workdir at launch time.
+# the browser and local integration addons by default, and appends the
+# invocation directory as a read/write workdir at launch time.
 
 BASE_PROFILE="${BASE_PROFILE:-$HOME/.pi/safehouse/custom-pi.sb}"
 BROWSER_ADDON="${BROWSER_ADDON:-$HOME/.pi/safehouse/browser-addon.sb}"
 KEYCHAIN_ADDON="${KEYCHAIN_ADDON:-$HOME/.pi/safehouse/keychain-addon.sb}"
 EMACS_ADDON="${EMACS_ADDON:-$HOME/.pi/safehouse/emacs-addon.sb}"
 PI_XDG_ADDON="${PI_XDG_ADDON:-$HOME/.pi/safehouse/pi-xdg-addon.sb}"
+DOCKER_ADDON="${DOCKER_ADDON:-$HOME/.pi/safehouse/docker-addon.sb}"
 
 if [[ ! -f "$BASE_PROFILE" ]]; then
   echo "Base profile not found: $BASE_PROFILE" >&2
@@ -355,6 +356,21 @@ if [[ -f "$PI_XDG_ADDON" ]]; then
 ;; ---------------------------------------------------------------------------
 EOF
   cat "$PI_XDG_ADDON"
+} >> "$TMP_POLICY"
+fi
+
+# Re-open local container sockets after the base profile's default deny.
+# Docker daemon access is powerful: it can bypass host filesystem restrictions.
+if [[ -f "$DOCKER_ADDON" ]]; then
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Docker addon (loaded by default if the addon file exists)
+;; Source: ${DOCKER_ADDON}
+;; ---------------------------------------------------------------------------
+EOF
+  cat "$DOCKER_ADDON"
 } >> "$TMP_POLICY"
 fi
 
