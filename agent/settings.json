@@ -3,6 +3,7 @@
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6.1-sol",
   "defaultThinkingLevel": "high",
+  "defaultTools": ["+codemode"],
   "packages": [
     "npm:pi-subagents",
     "npm:pi-web-access",
@@ -19,7 +20,7 @@
     "watchdog": {
       "enabled": false,
       "main": {
-        "model": "deepinfra/zai-org/GLM-5.3",
+        "model": "vercel-ai-gateway/zai/glm-5.3",
         "thinking": "high"
       },
       "scope": {
