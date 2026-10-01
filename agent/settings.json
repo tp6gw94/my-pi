@@ -1,19 +1,16 @@
 {
-  "lastChangelogVersion": "0.87.1",
+  "lastChangelogVersion": "0.99.2",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6.1-sol",
   "defaultThinkingLevel": "high",
-  "defaultTools": ["+codemode"],
+  "defaultTools": [
+    "+codemode"
+  ],
   "packages": [
     "npm:pi-subagents",
     "npm:pi-web-access",
-    "npm:pi-mcp-adapter",
-    "git:github.com/DietrichGebert/ponytail",
     "extensions/deepinfra-provider",
-    "git:github.com/tp6gw94/pi-review-triage@v0.1.6",
-    "git:github.com/tp6gw94/pi-ocr-hunk@v0.1.1",
-    "npm:pi-btw",
-    "https://github.com/cathrynlavery/diagram-design"
+    "npm:pi-btw"
   ],
   "theme": "github-light",
   "subagents": {
