@@ -19,40 +19,86 @@ export type FleetActions = {
 };
 
 const stateLabels: Record<string, string> = {
-  queued: "排隊", starting: "啟動中", running: "執行中", waiting_input: "等待回應", cancelling: "取消中",
-  completed: "完成", failed: "失敗", cancelled: "已取消", interrupted: "已中斷", active: "啟用", paused: "暫停", missed: "錯過",
+  queued: "\uf017", starting: "\uf135", running: "\uf04b", waiting_input: "\uf075", cancelling: "\uf110",
+  completed: "\uf00c", failed: "\uf057", cancelled: "\uf05e", interrupted: "\uf04d", active: "\uf205", paused: "\uf04c", missed: "\uf071",
 };
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
-const label = (status: string) => stateLabels[status] ?? status;
+const label = (status: string) => stateLabels[status] ?? singleLineText(status);
 const elapsed = (task: TaskResult) => `${Math.max(0, Math.floor(((task.finishedAt ?? Date.now()) - task.createdAt) / 1000))}s`;
-const timeoutLabel = (task: TaskResult) => task.timeoutMs === undefined ? "" : ` timeout=${task.timeoutMs / 1000}s`;
+const timeoutLabel = (task: TaskResult) => task.timeoutMs === undefined ? "" : ` \uf252${task.timeoutMs / 1000}s`;
 const shortId = (id: string) => id.slice(0, 8);
 const clean = (text: unknown) => safeText(text);
 const row = (text: unknown) => singleLineText(text);
 
-export function installFleetWidget(ctx: ExtensionContext, model: FleetUIModel) {
+export type FleetWidgetController = { toggle(): void };
+
+export function installFleetWidget(ctx: ExtensionContext, model: FleetUIModel): FleetWidgetController | undefined {
   if (ctx.mode !== "tui") return;
+  let expanded = false;
+  let toolsExpanded = ctx.ui.getToolsExpanded();
+  let disposed = false;
+  let requestRender = () => {};
+  const cache = new Map<string, { text: string; width: number; lines: string[] }>();
+  const controller = { toggle() { if (disposed) return; expanded = !expanded; if (!expanded) cache.clear(); requestRender(); } };
   ctx.ui.setWidget("rpc-subagents", (tui, theme) => {
+    requestRender = () => tui.requestRender();
     const unsubscribe = model.subscribe(() => tui.requestRender());
     const timer = setInterval(() => tui.requestRender(), 1000);
     return {
       render(width: number) {
-        const active = model.tasks().filter((task) => !terminal.has(task.status));
+        const currentToolsExpanded = ctx.ui.getToolsExpanded();
+        if (currentToolsExpanded !== toolsExpanded) {
+          toolsExpanded = currentToolsExpanded;
+          expanded = !expanded;
+          if (!expanded) cache.clear();
+        }
+        const tasks = model.tasks();
+        const active = tasks.filter((task) => !terminal.has(task.status));
+        const previews = expanded ? active.slice(0, 3) : [];
+        if (expanded && !active.length) {
+          const latest = tasks.filter((task) => terminal.has(task.status))
+            .sort((a, b) => (b.finishedAt ?? b.createdAt) - (a.finishedAt ?? a.createdAt))[0];
+          if (latest) previews.push(latest);
+        }
         const next = model.schedules().filter((record) => record.state.status === "active" && record.nextAt !== null)
           .sort((a, b) => a.nextAt! - b.nextAt!)[0];
-        if (!active.length && !next) return [];
-        const lines = [theme.fg("accent", `RPC subagents  ${active.length} 個任務  /rpc-subagents`)];
+        if (!active.length && !next && !previews.length) return [];
+        const usable = Math.max(1, width);
+        const lines = [theme.fg("accent", `RPC subagents  \uf0ae ${active.length}  ${expanded ? "\uf078 展開" : "\uf054 收合"} Ctrl+O  /rpc-subagents`)];
         for (const task of active.slice(0, 3)) {
           lines.push(`${shortId(task.taskId)} ${row(task.name)} ${row(task.model.provider)}/${row(task.model.id)} ${row(task.thinking ?? "unknown")} ${row(label(task.status))} ${elapsed(task)}${timeoutLabel(task)} ${row(task.currentTools.join(", "))}`);
         }
         if (active.length > 3) lines.push(`另有 ${active.length - 3} 個任務`);
         if (next) lines.push(`下次排程 ${shortId(next.scheduleId)} ${row(next.name)} ${new Date(next.nextAt!).toLocaleString("zh-TW")}`);
-        return lines.map((line) => truncateToWidth(line, Math.max(1, width)));
+        const maxHeight = Math.max(0, Math.min(20, tui.terminal.rows - 8));
+        if (expanded) lines.splice(maxHeight);
+        let budget = Math.max(0, Math.min(15, maxHeight - lines.length));
+        for (const id of cache.keys()) if (!previews.some((task) => task.taskId === id)) cache.delete(id);
+        for (let index = 0; index < previews.length && budget >= 2; index++) {
+          const task = previews[index];
+          const height = Math.min(5, Math.floor(budget / (previews.length - index)));
+          if (height < 2) break;
+          let preview = cache.get(task.taskId);
+          if (!preview || preview.text !== task.text || preview.width !== usable) {
+            const text = safeText(task.text, 65536).replace(/\t/g, " ");
+            const tail = text.slice(-Math.max(4096, usable * 8)).replace(/^[\uDC00-\uDFFF]/, "");
+            const wrapped = tail.split(/[\n\u2028\u2029]/).slice(-4)
+              .flatMap((line) => wrapTextWithAnsi(line, usable));
+            preview = { text: task.text, width: usable, lines: text.trim() ? wrapped.slice(-4) : ["（尚無輸出）"] };
+            cache.set(task.taskId, preview);
+          }
+          lines.push(theme.fg("muted", `${shortId(task.taskId)} 輸出 ${row(label(task.status))}${task.truncated ? "（保留內容已截短）" : ""}`));
+          const output = preview.lines.slice(-(height - 1));
+          lines.push(...output);
+          budget -= output.length + 1;
+        }
+        return lines.map((line) => truncateToWidth(line, usable));
       },
       invalidate() {},
-      dispose() { unsubscribe(); clearInterval(timer); },
+      dispose() { disposed = true; cache.clear(); requestRender = () => {}; unsubscribe(); clearInterval(timer); },
     };
   });
+  return controller;
 }
 
 type ScreenChoice = { kind: "task" | "schedule"; id: string; action: "cancel" | "view" | "respond" | "pause" | "resume" | "abort" };
@@ -121,7 +167,7 @@ export async function showFleetScreen(ctx: ExtensionContext, model: FleetUIModel
               text = `${task.taskId}\n${clean(task.name)}\n模型 ${clean(task.model.provider)}/${clean(task.model.id)} ${row(task.thinking ?? "unknown")}\n${label(task.status)} ${elapsed(task)}${timeoutLabel(task)}\n目錄 ${clean(task.cwd)}\n工具 ${clean(task.currentTools.join(", "))}\n${task.capabilities ? `能力 ${clean(task.capabilities.reachable.join(", "))}\n` : ""}${task.sessionId ? `工作階段 ${clean(task.sessionId)}${task.sessionReusable === true ? " 可續用" : " 不可續用"}\n` : ""}${task.error ? `錯誤 ${clean(task.error)}\n` : ""}${requests.length ? `待回覆請求 ${requests.map((request) => `${clean(request.requestId)} ${clean(request.question)}`).join("\n")}\n` : ""}${task.state.status === "waiting_input" && task.state.dialogs.length ? `待回應對話 ${task.state.dialogs.map((dialog) => `${clean(dialog.id)} ${clean(dialog.title ?? dialog.method)}`).join("\n")}\n` : ""}\n${safeText(task.text, 65536)}${task.truncated ? "\n[內容已截短，完整資料請開啟 viewer]" : ""}`;
             } else {
               const schedule = item as ScheduleRecord;
-              text = `${schedule.scheduleId}\n${clean(schedule.name)}\n${label(schedule.state.status)}\n${clean(JSON.stringify(schedule.trigger))}\n下次 ${schedule.nextAt === null ? "無" : new Date(schedule.nextAt).toLocaleString("zh-TW")}\n執行中 ${schedule.activeTaskIds.map(shortId).join(", ")}\n${schedule.error ? `錯誤 ${clean(schedule.error)}\n` : ""}\n${schedule.history.slice(-20).map((run) => `${new Date(run.at).toLocaleString("zh-TW")} ${clean(run.status)} ${run.taskId ? shortId(run.taskId) : ""}`).join("\n")}`;
+              text = `${schedule.scheduleId}\n${clean(schedule.name)}\n${label(schedule.state.status)}\n${clean(JSON.stringify(schedule.trigger))}\n下次 ${schedule.nextAt === null ? "無" : new Date(schedule.nextAt).toLocaleString("zh-TW")}\n${label("running")} ${schedule.activeTaskIds.map(shortId).join(", ")}\n${schedule.error ? `錯誤 ${clean(schedule.error)}\n` : ""}\n${schedule.history.slice(-20).map((run) => `${new Date(run.at).toLocaleString("zh-TW")} ${label(run.status)} ${run.taskId ? shortId(run.taskId) : ""}`).join("\n")}`;
             }
             const wrapped = text.split(/[\n\u2028\u2029]/).flatMap((line) => wrapTextWithAnsi(line, usable));
             scroll = Math.min(scroll, Math.max(0, wrapped.length - rows));

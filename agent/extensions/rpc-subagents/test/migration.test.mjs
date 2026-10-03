@@ -58,7 +58,7 @@ test("initialize prefers the existing sibling rpc-fleet/data root for existing m
   const registry = load({ extensionDir, calls, fleetOptions, scheduleOptions });
   assert.deepEqual(calls, [], "factory must not resolve the data root or other runtime resources");
   assert.equal(registry.tools.length, 15);
-  assert.deepEqual(registry.commands, ["rpc-subagents", "rpc-subagents-view"]);
+  assert.deepEqual(registry.commands, ["rpc-subagents", "rpc-subagents-output", "rpc-subagents-view"]);
   assert.deepEqual(registry.events, ["resources_discover", "session_start", "session_shutdown"]);
   await registry.handlers.get("session_start")({ type: "session_start" }, sessionContext(base));
   assert.equal(calls[0], "resolveDataRoot");

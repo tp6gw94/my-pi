@@ -11,7 +11,7 @@ import { COORDINATION_LIMITS } from "./coordination.mjs";
 import { captureBranch } from "./snapshot.mjs";
 import { canonicalCwd, createTaskPreparer, loadLocalConfig, resolveCliEntrypoint, resolveDataRoot } from "./runtime.mjs";
 import { HerdrOpener, createHerdrCliAdapter, viewerCommand } from "./herdr.mjs";
-import { installFleetWidget, showFleetScreen, type FleetUIModel } from "./ui.ts";
+import { installFleetWidget, showFleetScreen, type FleetUIModel, type FleetWidgetController } from "./ui.ts";
 import { safeText } from "./viewer.mjs";
 import type { TaskSpec, TaskResult, ScheduleRecord } from "./domain.d.ts";
 
@@ -88,6 +88,7 @@ export default function rpcSubagents(pi: ExtensionAPI) {
   pi.on("resources_discover", () => ({ skillPaths: [join(extensionDir, "skills", "rpc-subagents", "SKILL.md")] }));
   let stopped = false;
   let notificationCtx: ExtensionContext | undefined;
+  let widgetController: FleetWidgetController | undefined;
   let appPromise: ReturnType<typeof initialize> | undefined;
 
   async function initialize() {
@@ -254,16 +255,19 @@ export default function rpcSubagents(pi: ExtensionAPI) {
     async ({ scheduleId, cwd, abortRunning }, _signal, ctx) => (await (await app()).project(cwd ?? ctx.cwd)).cancel(scheduleId, { abortRunning }));
 
   pi.on("session_start", async (_event, ctx) => {
+    widgetController = undefined;
     try {
       notificationCtx = ctx;
       const current = await app();
-      installFleetWidget(ctx, current.model);
+      if (stopped) return;
+      if (ctx.mode === "tui") widgetController = installFleetWidget(ctx, current.model);
       await current.project(ctx.cwd);
     } catch (error) { if (ctx.mode === "tui") ctx.ui.notify(safeText(`RPC subagents 排程未啟動。${error instanceof Error ? error.message : String(error)}`), "warning"); }
   });
   pi.on("session_shutdown", async (_event, ctx) => {
     stopped = true;
     notificationCtx = undefined;
+    widgetController = undefined;
     if (ctx.mode === "tui") ctx.ui.setWidget("rpc-subagents", undefined);
     if (!appPromise) return;
     const current = await appPromise.catch(() => undefined);
@@ -289,6 +293,14 @@ export default function rpcSubagents(pi: ExtensionAPI) {
         pauseSchedule: (id) => scheduleOwner(id).pause(id), resumeSchedule: (id) => scheduleOwner(id).resume(id),
         cancelSchedule: (id, abortRunning) => scheduleOwner(id).cancel(id, { abortRunning }),
       });
+    },
+  });
+  pi.registerCommand("rpc-subagents-output", {
+    description: "展開或收合 RPC 子任務的即時輸出預覽",
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") throw new Error("RPC 子任務輸出預覽只支援 TUI 模式。");
+      if (!widgetController) throw new Error("RPC 子任務輸出預覽尚未啟動。");
+      widgetController.toggle();
     },
   });
   pi.registerCommand("rpc-subagents-view", {

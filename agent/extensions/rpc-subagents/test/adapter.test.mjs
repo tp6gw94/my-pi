@@ -22,13 +22,13 @@ const source = stripTypeScriptTypes(await readFile(new URL(moduleUrl), "utf8"));
 const factorySource = source.replace(/^import .*?;\s*$/gm, "").replace("export default function rpcSubagents", "function rpcSubagents").replaceAll("import.meta.url", "moduleUrl") + "\nrpcSubagents";
 
 function load(env, context = {}, api = {}) {
-  const tools = []; const commands = []; const events = []; const handlers = new Map();
+  const tools = []; const commands = []; const commandHandlers = new Map(); const events = []; const handlers = new Map();
   const forbidden = () => { throw new Error("Factory attempted to initialize runtime resources"); };
   const factory = runInNewContext(factorySource, { process: { env }, Type: schema, dirname, join, fileURLToPath, moduleUrl, COORDINATION_LIMITS, safeText,
     getPackageDir: forbidden, getAgentDir: forbidden, loadLocalConfig: forbidden, resolveDataRoot: forbidden, setTimeout: forbidden, setInterval: forbidden, ...context });
-  factory({ registerTool: (tool) => tools.push(tool), registerCommand: (name) => commands.push(name),
+  factory({ registerTool: (tool) => tools.push(tool), registerCommand: (name, command) => { commands.push(name); commandHandlers.set(name, command.handler); },
     on: (name, handler) => { events.push(name); handlers.set(name, handler); }, ...api });
-  return { tools, commands, events, handlers };
+  return { tools, commands, commandHandlers, events, handlers };
 }
 
 test("adapter factory registers unique codemode tools with directly accessible structured result declarations but starts no resources", () => {
@@ -63,8 +63,34 @@ test("adapter factory registers unique codemode tools with directly accessible s
   const steer = registry.tools.find((tool) => tool.name === "rpc_subagents_steer");
   assert.equal(steer.parameters.properties.message.maxLength, 8192);
   assert.equal(steer.outputSchema.properties.disposition.anyOf.some((value) => value.const === "queued"), true);
-  assert.deepEqual(registry.commands, ["rpc-subagents", "rpc-subagents-view"]);
+  assert.deepEqual(registry.commands, ["rpc-subagents", "rpc-subagents-output", "rpc-subagents-view"]);
   assert.deepEqual(registry.events, ["resources_discover", "session_start", "session_shutdown"]);
+});
+
+test("output command toggles installed TUI preview, resets on session start, and rejects unavailable modes", async () => {
+  let expanded = false;
+  const registry = load({}, {
+    loadLocalConfig: async () => ({}), resolveDataRoot: () => "/data", getPackageDir: () => "/pi", getAgentDir: () => "/agent",
+    resolveCliEntrypoint: () => "/pi/cli", createTaskPreparer: () => () => {},
+    FleetManager: class { subscribe() { return () => {}; } list() { return []; } async shutdown() {} },
+    ScheduleManager: class { subscribe() { return () => {}; } async start() {} async shutdown() {} list() { return []; } },
+    HerdrOpener: class {}, createHerdrCliAdapter: () => ({}), canonicalCwd: async (cwd) => cwd, projectKey: () => "project",
+    installFleetWidget: () => { expanded = false; return { toggle() { expanded = !expanded; } }; },
+  });
+  const command = registry.commandHandlers.get("rpc-subagents-output");
+  const ctx = { mode: "tui", hasUI: true, cwd: "/project", ui: { notify() {}, setWidget() {} } };
+  await assert.rejects(command("", ctx), /尚未啟動/);
+  for (const mode of ["rpc", "json", "print"]) await assert.rejects(command("", { ...ctx, mode }), /TUI/);
+  await registry.handlers.get("session_start")({}, ctx);
+  await command("", ctx);
+  assert.equal(expanded, true);
+  await command("", ctx);
+  assert.equal(expanded, false);
+  await command("", ctx);
+  await registry.handlers.get("session_start")({}, ctx);
+  assert.equal(expanded, false);
+  await registry.handlers.get("session_shutdown")({}, ctx);
+  await assert.rejects(command("", ctx), /尚未啟動/);
 });
 
 test("task output schema accepts new metadata and legacy results without it", {
@@ -149,7 +175,7 @@ test("pending child asks wake the parent exactly once, forward explicit replies,
   }
   const registry = load({}, { dirname: () => directory, loadLocalConfig: async () => ({}), resolveDataRoot: () => join(directory, "data"), getPackageDir: () => directory, getAgentDir: () => directory,
     resolveCliEntrypoint: () => "/pi", createTaskPreparer: () => () => { throw new Error("No task preparation allowed"); },
-    FleetManager: FakeFleet, ScheduleManager: class { subscribe() { return () => {}; } async start() {} list() { return []; } },
+    FleetManager: FakeFleet, ScheduleManager: class { subscribe() { return () => {}; } async start() {} async shutdown() {} list() { return []; } },
     HerdrOpener: class {}, createHerdrCliAdapter: () => ({}), canonicalCwd: realpath, projectKey, readSchedules },
     { sendMessage: (message, options) => { attempts++; if (failNext) throw new Error("session is closing"); messages.push({ message, options }); } });
   const ctx = { mode: "print", hasUI: true, cwd: directory, ui: { notify: (message, type) => notices.push([message, type]) } };
@@ -227,7 +253,7 @@ test("wake bookkeeping follows currently pending request keys on a retained task
   }
   const registry = load({}, { dirname: () => directory, loadLocalConfig: async () => ({}), resolveDataRoot: () => join(directory, "data"), getPackageDir: () => directory, getAgentDir: () => directory,
     resolveCliEntrypoint: () => "/pi", createTaskPreparer: () => () => { throw new Error("No task preparation allowed"); },
-    FleetManager: FakeFleet, ScheduleManager: class { subscribe() { return () => {}; } async start() {} list() { return []; } },
+    FleetManager: FakeFleet, ScheduleManager: class { subscribe() { return () => {}; } async start() {} async shutdown() {} list() { return []; } },
     HerdrOpener: class {}, createHerdrCliAdapter: () => ({}), canonicalCwd: realpath, projectKey, readSchedules },
     { sendMessage: (message) => messages.push(message) });
   const ctx = { mode: "print", hasUI: true, cwd: directory, ui: { notify: () => {} } };
