@@ -1,0 +1,11 @@
+{
+  "concurrency": 4,
+  "commandTimeoutMs": 30000,
+  "dialogTimeoutMs": 120000,
+  "maxEventBytes": 67108864,
+  "projects": {
+    "/absolute/canonical/project/path": {
+      "providerSources": ["/absolute/path/to/provider-extension"]
+    }
+  }
+}

@@ -3,6 +3,7 @@
   "summaryModel": "opencode-go/deepseek-v4.1-flash:low",
   "searchRouting": {
     "providers": [
+      "openai",
       "exa"
     ],
     "useCurrentModel": false,
@@ -16,6 +17,7 @@
   "webSearch": {
     "enabled": true,
     "allowedProviders": [
+      "openai",
       "exa"
     ]
   },

@@ -1,0 +1,12 @@
+{
+  "name": "rpc-subagents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "pi": { "extensions": ["./index.ts"] },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node --experimental-strip-types --check index.ts && node --experimental-strip-types --check ui.ts && node --experimental-strip-types --check child.ts && node --experimental-strip-types --check web.ts && node --check runtime.mjs && node --check coordination.mjs && node --check web-policy.mjs && node --check viewer.mjs"
+  },
+  "dependencies": { "croner": "9.1.0" }
+}
