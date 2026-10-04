@@ -1,0 +1,14 @@
+{
+  "name": "resume-handoff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "pi": { "extensions": ["./index.ts"] },
+  "scripts": {
+    "test": "node --experimental-strip-types --test --test-timeout=20000 test/*.test.ts",
+    "check": "node --experimental-strip-types --check index.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
