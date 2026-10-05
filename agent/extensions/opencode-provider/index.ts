@@ -23,6 +23,13 @@ type RawModel = {
 };
 
 type ZenApi = "openai-responses" | "anthropic-messages" | "openai-completions";
+type ProtocolModelConfig = ProviderModelConfig & { api: ZenApi };
+
+const GO_RESPONSES_IDS = new Set(["muse-spark-1.2-contributor", "muse-spark-1.3-contributor"]);
+
+function goApiFor(id: string): ZenApi {
+  return GO_RESPONSES_IDS.has(id) ? "openai-responses" : "openai-completions";
+}
 
 // OpenCode Zen exposes three different API styles depending on model family.
 // This mirrors the proven routing in the old curated lists; Models.dev's own
@@ -67,14 +74,15 @@ function compatFor(m: Pick<RawModel, "id" | "interleaved">, api: ZenApi): Provid
   return compat;
 }
 
-function toConfig(m: RawModel, api: ZenApi): ProviderModelConfig {
+function toConfig(m: RawModel, api: ZenApi): ProtocolModelConfig {
   const input = (m.modalities?.input ?? ["text"]).filter(
     (x): x is "text" | "image" => x === "text" || x === "image",
   );
   const cost = m.cost ?? {};
-  const cfg: ProviderModelConfig = {
+  const cfg: ProtocolModelConfig = {
     id: m.id,
     name: m.name,
+    api,
     reasoning: !!m.reasoning,
     input: input.length ? input : ["text"],
     contextWindow: m.limit?.context ?? 200000,
@@ -93,10 +101,11 @@ function toConfig(m: RawModel, api: ZenApi): ProviderModelConfig {
 
 // Degraded entry when the catalog is unreachable: keep the model usable with
 // default metadata rather than dropping it entirely.
-function defaultConfig(id: string, api: ZenApi): ProviderModelConfig {
+function defaultConfig(id: string, api: ZenApi): ProtocolModelConfig {
   return {
     id,
     name: id,
+    api,
     reasoning: true,
     input: ["text"],
     contextWindow: 200000,
@@ -148,12 +157,12 @@ export default async function (pi: ExtensionAPI) {
   const goRaw = raw?.["opencode-go"]?.models ? Object.values(raw["opencode-go"].models) : null;
 
   let zen: ReturnType<typeof splitZen>;
-  let go: ProviderModelConfig[];
+  let go: ProtocolModelConfig[];
 
   if (zenRaw && goRaw) {
     const keep = (ids: Set<string>) => (m: RawModel) => ids.size === 0 || ids.has(m.id);
     zen = splitZen(zenRaw.filter(keep(zenLive)));
-    go = goRaw.filter(keep(goLive)).map((m) => toConfig(m, "openai-completions"));
+    go = goRaw.filter(keep(goLive)).map((m) => toConfig(m, goApiFor(m.id)));
   } else {
     // Catalog unreachable: fall back to OpenCode's live id list with defaults.
     const idsTo = (ids: Set<string>, api: ZenApi) => [...ids].map((id) => defaultConfig(id, api));
@@ -162,7 +171,7 @@ export default async function (pi: ExtensionAPI) {
       messages: idsTo(new Set([...zenLive].filter((id) => zenApiFor(id) === "anthropic-messages")), "anthropic-messages"),
       completions: idsTo(new Set([...zenLive].filter((id) => zenApiFor(id) === "openai-completions")), "openai-completions"),
     };
-    go = [...goLive].map((id) => defaultConfig(id, "openai-completions"));
+    go = [...goLive].map((id) => defaultConfig(id, goApiFor(id)));
   }
 
   // ── OpenCode Zen (pay-as-you-go) ──
