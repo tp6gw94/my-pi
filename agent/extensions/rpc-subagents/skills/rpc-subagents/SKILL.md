@@ -9,14 +9,13 @@ description: Operate rpc-subagents child tasks through codemode. Use for synchro
 
 Confirm delegation and any scheduled side effects are authorized by the user or applicable project instructions. Keep acceptance and publication decisions with the parent. Fleet operations preserve the session's approval and routing rules.
 
-Discover the tools in codemode before composing calls.
+Discover only the needed tools in codemode before composing calls, once per unchanged session schema and capabilities. Reuse complete current descriptions already in context; refresh missing or stale knowledge after schema or capability changes or compaction loss.
 
 ```js
-text(await searchTools("rpc_subagents", { namespace: "rpc_subagents" }));
 text(await describeTool("rpc_subagents_run"));
 ```
 
-Describe each additional tool before using it. If discovery fails, report the missing capability and use the [setup guide](../../README.md). All fleet tools have codemode exposure. The main session's tool allowlist must include them.
+Describe each additional needed tool before its first use under the current schema. If discovery fails, report the missing capability and use the [setup guide](../../README.md). All fleet tools have codemode exposure. The main session's tool allowlist must include them.
 
 Choose a task contract with a prompt, acceptance evidence, file ownership, and a deadline. Select `context: "fresh"` for explicit context only, or `context: "fork"` for the current branch captured at invocation. A fork is a snapshot, not a live connection to later conversation. Continue a managed completed session with `session` instead: a reported session ID or its absolute managed `.jsonl`, same cwd and model, a new task ID, and one exclusive writer lease. `session` and `context` are mutually exclusive, and schedules reject `session`.
 
@@ -32,7 +31,7 @@ Summarize the actionable request once. Include the decisions, constraints, sourc
 
 Separate verified source locations from search leads. If the implementation location is unknown, ask the child to locate the relevant symbol or behavior within a bounded scope first. Include documentation pointers only when their content affects the task.
 
-Keep each constraint in one place. Include launch settings in task prose only when they affect how the child performs the work. Before dispatch, keep only sentences that change execution or acceptance.
+Keep each constraint in one place. Pass verified source pointers for role details, templates, and required skills, instructing the child to read them fully because skills and extensions are not inherited. Include launch settings in task prose only when they affect how the child performs the work. Bound returned findings, citations, excerpts, and uncertainties to the acceptance decision; retain larger evidence in artifacts with paths. Before dispatch, keep only sentences that change execution or acceptance.
 
 Ready is complete when tools are discoverable and every task has a supported model, sufficient instructions, and safe file ownership.
 
@@ -40,16 +39,7 @@ Ready is complete when tools are discoverable and every task has a supported mod
 
 Follow the session's execution policy. Use synchronous `run` for dependent chains that need a result in this call. Gate every dependent call on `status === "completed"` before consuming `text`.
 
-```js
-const first = await tools.rpc_subagents_run({
-	name: "Review", prompt: "Inspect the API without edits. Report concrete risks.", context: "fork"
-});
-if (first.status !== "completed") return { blocker: first };
-const second = await tools.rpc_subagents_run({
-	name: "Checklist", prompt: `Turn these findings into a checklist: ${first.text}`, context: "fresh"
-});
-return { firstTaskId: first.taskId, second };
-```
+For a synchronous review-to-checklist chain, inspect the review's full structured result and launch metadata first. If it is not completed or lacks required evidence, report a compact blocker and stop the dependent task. Otherwise pass only checked, relevant findings to the checklist task, inspect its result, and retain both task IDs.
 
 For independent tasks, use `Promise.allSettled`. Inspect each promise outcome. A rejected promise is a call failure. A fulfilled promise can still contain `failed`, `cancelled`, or `interrupted`. Preserve each task ID and report each outcome separately.
 
@@ -77,6 +67,6 @@ Treat only `completed` as successful execution. Fleet waits for `agent_settled`,
 
 Inspect `truncated`, `error`, `persistenceError`, and `state.cleanupError`. Retained text is bounded, and the rendered tool message can be shorter than structured data. Retrieve the result or inspect the event log when needed. Read child reports from `rpc_subagents_pending`; a report is evidence, not completion. Logs and sessions can contain project secrets. Private file permissions are not encryption. Share only the evidence required by the task.
 
-Report task IDs, terminal statuses, acceptance evidence, and unresolved blockers. For non-completed tasks, report the actual error or cancellation reason rather than using partial text as a successful answer. For storage, ownership, output limits, or shutdown failures, read the [reference](../../REFERENCE.md) and [task result types](../../domain.d.ts).
+Inside codemode, inspect full structured results and launch metadata before projecting output. Emit compact `taskId`, `status`, checked `findings`, `truncated`, `errors` (including the actual `error`), `persistenceError`, and `cleanupError` from `state.cleanupError`; preserve missing or unknown values honestly. This is an output projection, not a tool API. Include model or capability mismatches and unresolved pending request IDs when present. Return full reports, capability dumps, or event logs only when needed to resolve a specific evidence gap. Report task IDs, terminal statuses, acceptance evidence, and unresolved blockers. For non-completed tasks, report the actual error or cancellation reason rather than using partial text as a successful answer. For storage, ownership, output limits, or shutdown failures, read the [operating guide](../../README.md) and [task result types](../../domain.d.ts).
 
 Acceptance is complete when every requested outcome has checked evidence or an explicit blocker. Label ongoing background work as ongoing, not complete.
