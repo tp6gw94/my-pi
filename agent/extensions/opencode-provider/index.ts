@@ -1,3 +1,5 @@
+import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
 // OpenCode Zen (pay-as-you-go) and OpenCode Go ($10/mo) share one upstream
@@ -7,12 +9,24 @@ import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-codin
 const ZEN_BASE = "https://opencode.ai/zen/v1";
 const GO_BASE = "https://opencode.ai/zen/go/v1";
 const CATALOG_URL = "https://models.dev/api.json";
+const DS_FLASH_ID = "deepseek-v4.1-flash";
+const GO_AUTOMATIC_THINKING_IDS = new Set(["glm-5.3-flash"]);
+const NATIVE_RANK: Record<string, number> = {
+  none: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+};
+const TOGGLE_FORMATS = new Set(["deepseek", "zai", "qwen", "together", "qwen-chat-template"]);
 
 type RawModel = {
   id: string;
   name: string;
   reasoning?: boolean;
-  reasoning_options?: { values?: string[] }[];
+  reasoning_options?: unknown;
   modalities?: { input?: string[] };
   limit?: { context?: number; output?: number };
   cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
@@ -23,9 +37,35 @@ type RawModel = {
 };
 
 type ZenApi = "openai-responses" | "anthropic-messages" | "openai-completions";
-type ProtocolModelConfig = ProviderModelConfig & { api: ZenApi };
+type ProtocolModelConfig = Extract<ProviderModelConfig, { type?: "chat" }> & { api: ZenApi };
+type CompletionsCompat = NonNullable<Model<"openai-completions">["compat"]>;
+type OffKind = "unverified" | "none" | "toggle";
+type ParsedThinking =
+  | { kind: "absent" }
+  | { kind: "malformed" }
+  | { kind: "empty" }
+  | { kind: "unsupported" }
+  | { kind: "effort"; natives: string[]; off: OffKind }
+  | { kind: "toggle"; off: OffKind }
+  | { kind: "budget" };
+type ThinkingFormat = NonNullable<GoThinkingConfig["compat"]["thinkingFormat"]>;
+type GoThinkingInput = {
+  id: string;
+  reasoning?: boolean;
+  reasoning_options?: unknown;
+};
+type GoThinkingConfig = {
+  reasoning: boolean;
+  thinkingLevelMap?: Partial<Record<ModelThinkingLevel, string | null>>;
+  compat: Pick<
+    CompletionsCompat,
+    "supportsReasoningEffort" | "thinkingFormat"
+  >;
+};
 
 const GO_RESPONSES_IDS = new Set(["muse-spark-1.2-contributor", "muse-spark-1.3-contributor"]);
+const builtinGo = new Map<string, Model<Api>>();
+for (const model of getBuiltinModels("opencode-go")) builtinGo.set(model.id, model);
 
 function goApiFor(id: string): ZenApi {
   return GO_RESPONSES_IDS.has(id) ? "openai-responses" : "openai-completions";
@@ -46,8 +86,162 @@ const DEFAULT_THINK = { off: "none", minimal: "low", low: "low", medium: "medium
 // Models that advertise a "max" reasoning effort get xhigh -> "max"; pi
 // clamps anything a model doesn't support, so the default "high" is safe.
 function thinkMap(m: RawModel) {
-  const supportsMax = m.reasoning_options?.some((o) => o.values?.includes("max")) ?? false;
+  const supportsMax =
+    Array.isArray(m.reasoning_options) &&
+    m.reasoning_options.some(
+      (option) =>
+        option &&
+        typeof option === "object" &&
+        !Array.isArray(option) &&
+        Array.isArray((option as { values?: unknown }).values) &&
+        ((option as { values: unknown[] }).values.includes("max")),
+    );
   return supportsMax ? { ...DEFAULT_THINK, xhigh: "max" } : { ...DEFAULT_THINK };
+}
+
+function uniqueNatives(values: string[]): string[] {
+  const found = new Set<string>();
+  for (const value of values) {
+    if (value !== "none" && Object.hasOwn(NATIVE_RANK, value)) found.add(value);
+  }
+  return [...found].sort((a, b) => NATIVE_RANK[a] - NATIVE_RANK[b]);
+}
+
+function parseGoThinking(options: unknown, present: boolean): ParsedThinking {
+  if (!present) return { kind: "absent" };
+  if (!Array.isArray(options)) return { kind: "malformed" };
+  if (options.length === 0) return { kind: "empty" };
+  const natives: string[] = [];
+  let off: OffKind = "unverified";
+  let toggle = false;
+  let budget = false;
+  let emptyEffort = false;
+  let unsupported = false;
+  for (const option of options) {
+    if (!option || typeof option !== "object" || Array.isArray(option)) continue;
+    const rec = option as { type?: unknown; values?: unknown };
+    if (rec.type === "effort") {
+      if (!Array.isArray(rec.values)) continue;
+      if (rec.values.length === 0) {
+        emptyEffort = true;
+        continue;
+      }
+      if (!rec.values.every((value) => value === null || typeof value === "string")) continue;
+      for (const value of rec.values) {
+        if (value === null) {
+          if (off === "unverified") off = "toggle";
+        } else if (value === "none") off = "none";
+        else if (Object.hasOwn(NATIVE_RANK, value)) natives.push(value);
+        else unsupported = true;
+      }
+    } else if (rec.type === "toggle") {
+      toggle = true;
+    } else if (rec.type === "budget_tokens") {
+      budget = true;
+    } else if (typeof rec.type === "string" && rec.type.length > 0) {
+      unsupported = true;
+    }
+  }
+  if (natives.length || off !== "unverified") {
+    return { kind: "effort", natives: uniqueNatives(natives), off: toggle && off === "unverified" ? "toggle" : off };
+  }
+  if (toggle) return { kind: "toggle", off: "toggle" };
+  if (budget) return { kind: "budget" };
+  if (emptyEffort) return { kind: "empty" };
+  if (unsupported) return { kind: "unsupported" };
+  return { kind: "malformed" };
+}
+
+function thinkingFromBuiltin(model: Model<Api>): ParsedThinking {
+  if (!model.reasoning) return { kind: "unsupported" };
+  const map = model.thinkingLevelMap;
+  if (!map) return { kind: "absent" };
+  const values: string[] = [];
+  let off: OffKind = "unverified";
+  for (const [key, value] of Object.entries(map)) {
+    if (typeof value !== "string") continue;
+    if (key === "off" || value === "none") {
+      off = "none";
+      continue;
+    }
+    values.push(value);
+  }
+  const natives = uniqueNatives(values);
+  if (!natives.length) return off === "none" ? { kind: "toggle", off } : { kind: "absent" };
+  return { kind: "effort", natives, off };
+}
+
+function aliasMap(
+  natives: readonly string[],
+  off: OffKind,
+  id: string,
+  format: ThinkingFormat | undefined,
+): Record<ModelThinkingLevel, string | null> {
+  const pick = (rank: number) => {
+    for (const value of natives) {
+      if (NATIVE_RANK[value] >= rank) return value;
+    }
+    return null;
+  };
+  return {
+    off: id === DS_FLASH_ID || off === "none" || (off === "toggle" && format) ? "none" : null,
+    minimal: pick(1),
+    low: pick(2),
+    medium: pick(3),
+    high: pick(4),
+    xhigh: pick(5),
+    max: pick(6),
+  };
+}
+
+function toggleFormat(id: string, api: ZenApi): ThinkingFormat | undefined {
+  if (api !== "openai-completions") return undefined;
+  if (id.startsWith("deepseek")) return "deepseek";
+  const builtin = builtinGo.get(id);
+  if (!builtin || builtin.api !== api || !builtin.compat) return undefined;
+  const format = "thinkingFormat" in builtin.compat ? builtin.compat.thinkingFormat : undefined;
+  return typeof format === "string" && TOGGLE_FORMATS.has(format) ? (format as ThinkingFormat) : undefined;
+}
+
+function goThinkingFor(model: GoThinkingInput, api: ZenApi): GoThinkingConfig {
+  const closed: GoThinkingConfig = { reasoning: false, compat: { supportsReasoningEffort: false } };
+  if (GO_AUTOMATIC_THINKING_IDS.has(model.id)) return closed;
+  if (Object.hasOwn(model, "reasoning") && model.reasoning === false) {
+    return { reasoning: false, compat: {} };
+  }
+  let parsed = parseGoThinking(model.reasoning_options, Object.hasOwn(model, "reasoning_options"));
+  if (parsed.kind === "absent" || parsed.kind === "malformed") {
+    const builtin = builtinGo.get(model.id);
+    if (builtin && builtin.api === api) parsed = thinkingFromBuiltin(builtin);
+  }
+  if (parsed.kind === "effort") {
+    const toggle = parsed.off === "toggle" ? toggleFormat(model.id, api) : undefined;
+    const format = toggle === "qwen-chat-template" ? undefined : toggle;
+    const compat: GoThinkingConfig["compat"] = { supportsReasoningEffort: true };
+    if (format) compat.thinkingFormat = format;
+    const thinkingLevelMap = aliasMap(parsed.natives, parsed.off, model.id, format);
+    if (!Object.values(thinkingLevelMap).some((value) => value !== null)) return closed;
+    return { reasoning: true, thinkingLevelMap, compat };
+  }
+  if (parsed.kind === "toggle") {
+    const format = toggleFormat(model.id, api);
+    if (!format) return closed;
+    return {
+      reasoning: true,
+      thinkingLevelMap: { off: "none", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null },
+      compat: { supportsReasoningEffort: false, thinkingFormat: format },
+    };
+  }
+  return closed;
+}
+
+function applyGoThinking(cfg: ProtocolModelConfig, model: GoThinkingInput): ProtocolModelConfig {
+  const thinking = goThinkingFor(model, cfg.api);
+  cfg.reasoning = thinking.reasoning;
+  if (thinking.thinkingLevelMap) cfg.thinkingLevelMap = thinking.thinkingLevelMap;
+  else delete cfg.thinkingLevelMap;
+  cfg.compat = { ...cfg.compat, ...thinking.compat };
+  return cfg;
 }
 
 function interleavedField(m: Pick<RawModel, "interleaved">): string | undefined {
@@ -56,8 +250,8 @@ function interleavedField(m: Pick<RawModel, "interleaved">): string | undefined 
   return typeof raw === "object" ? raw?.field : undefined;
 }
 
-function compatFor(m: Pick<RawModel, "id" | "interleaved">, api: ZenApi): ProviderModelConfig["compat"] {
-  const compat: ProviderModelConfig["compat"] = { supportsDeveloperRole: api === "openai-responses" };
+function compatFor(m: Pick<RawModel, "id" | "interleaved">, api: ZenApi): CompletionsCompat {
+  const compat: CompletionsCompat = { supportsDeveloperRole: api === "openai-responses" };
   if (m.id.startsWith("deepseek")) compat.thinkingFormat = "deepseek";
   // Thinking-mode upstreams (DeepSeek, GLM, Kimi, MiMo, LongCat, ...) 400 with
   // "The `reasoning_content` in the thinking mode must be passed back to the
@@ -162,7 +356,7 @@ export default async function (pi: ExtensionAPI) {
   if (zenRaw && goRaw) {
     const keep = (ids: Set<string>) => (m: RawModel) => ids.size === 0 || ids.has(m.id);
     zen = splitZen(zenRaw.filter(keep(zenLive)));
-    go = goRaw.filter(keep(goLive)).map((m) => toConfig(m, goApiFor(m.id)));
+    go = goRaw.filter(keep(goLive)).map((m) => applyGoThinking(toConfig(m, goApiFor(m.id)), m));
   } else {
     // Catalog unreachable: fall back to OpenCode's live id list with defaults.
     const idsTo = (ids: Set<string>, api: ZenApi) => [...ids].map((id) => defaultConfig(id, api));
@@ -171,7 +365,7 @@ export default async function (pi: ExtensionAPI) {
       messages: idsTo(new Set([...zenLive].filter((id) => zenApiFor(id) === "anthropic-messages")), "anthropic-messages"),
       completions: idsTo(new Set([...zenLive].filter((id) => zenApiFor(id) === "openai-completions")), "openai-completions"),
     };
-    go = [...goLive].map((id) => defaultConfig(id, goApiFor(id)));
+    go = [...goLive].map((id) => applyGoThinking(defaultConfig(id, goApiFor(id)), { id }));
   }
 
   // ── OpenCode Zen (pay-as-you-go) ──

@@ -1,5 +1,12 @@
 {
   "name": "opencode-provider",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --experimental-strip-types ./check.mts"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.0.2"
+  },
   "pi": {
     "extensions": ["./index.ts"]
   }
