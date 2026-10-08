@@ -1,408 +1,899 @@
-import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  Model,
+  ModelThinkingLevel,
+  Provider,
+  ProviderStreams,
+  SimpleStreamOptions,
+  StreamOptions,
+  TranscriptContext,
+} from "@earendil-works/pi-ai";
+import { clampThinkingLevel, createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { opencodeGoProvider } from "@earendil-works/pi-ai/providers/opencode-go";
+import { opencodeProvider } from "@earendil-works/pi-ai/providers/opencode";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// OpenCode Zen (pay-as-you-go) and OpenCode Go ($10/mo) share one upstream
-// catalog: Models.dev. OpenCode builds its own model list from it, so we pull
-// the full metadata (context window, cost, modalities, reasoning) straight
-// from the public catalog instead of maintaining a hand-written copy here.
+const CATALOG_URL = "https://models.dev/api.json";
 const ZEN_BASE = "https://opencode.ai/zen/v1";
 const GO_BASE = "https://opencode.ai/zen/go/v1";
-const CATALOG_URL = "https://models.dev/api.json";
-const DS_FLASH_ID = "deepseek-v4.1-flash";
-const GO_AUTOMATIC_THINKING_IDS = new Set(["glm-5.3-flash"]);
-const NATIVE_RANK: Record<string, number> = {
-  none: 0,
-  minimal: 1,
-  low: 2,
-  medium: 3,
-  high: 4,
-  xhigh: 5,
-  max: 6,
-};
-const TOGGLE_FORMATS = new Set(["deepseek", "zai", "qwen", "together", "qwen-chat-template"]);
+const ZEN_API_KEY = "OPENCODE_ZEN_API_KEY";
+const GO_API_KEY = "OPENCODE_GO_API_KEY";
+const TITLE_HEADERS = { "X-Title": "pi-agent" };
+const VERIFIED_GO_GLM = "glm-5.3-flash";
 
-type RawModel = {
-  id: string;
-  name: string;
-  reasoning?: boolean;
-  reasoning_options?: unknown;
-  modalities?: { input?: string[] };
-  limit?: { context?: number; output?: number };
-  cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
-  // Models.dev marks models that expect the reasoning trace echoed back on
-  // every assistant message: `{ "field": "reasoning_content" }` (or the field
-  // name as a bare string / the boolean form when no field name is known).
-  interleaved?: boolean | string | { field?: string };
+type ZenApi = "openai-responses" | "anthropic-messages" | "openai-completions" | "google-generative-ai";
+type Acquired<T> = { kind: "available"; value: T } | { kind: "unavailable" };
+type Controls = { effort: boolean; toggle: boolean; budget: boolean; off: boolean };
+type ControlEvidence = {
+  controls: Controls;
+  effortValues: Set<string>;
+  budgetField?: string;
+  effortOff: boolean;
+  toggleOff: boolean;
 };
-
-type ZenApi = "openai-responses" | "anthropic-messages" | "openai-completions";
-type ProtocolModelConfig = Extract<ProviderModelConfig, { type?: "chat" }> & { api: ZenApi };
-type CompletionsCompat = NonNullable<Model<"openai-completions">["compat"]>;
-type OffKind = "unverified" | "none" | "toggle";
-type ParsedThinking =
-  | { kind: "absent" }
-  | { kind: "malformed" }
-  | { kind: "empty" }
-  | { kind: "unsupported" }
-  | { kind: "effort"; natives: string[]; off: OffKind }
-  | { kind: "toggle"; off: OffKind }
-  | { kind: "budget" };
-type ThinkingFormat = NonNullable<GoThinkingConfig["compat"]["thinkingFormat"]>;
-type GoThinkingInput = {
-  id: string;
-  reasoning?: boolean;
-  reasoning_options?: unknown;
+type Declared =
+  | { kind: "inherit" }
+  | { kind: "withhold" }
+  | { kind: "axes"; effort: string[]; toggle: boolean; budget: boolean };
+type ResolvedModel = {
+  model: Model<Api>;
+  nativeOutput: boolean;
+  controls: Controls;
+  effort: Set<string>;
+  budgetField?: string;
 };
-type GoThinkingConfig = {
-  reasoning: boolean;
-  thinkingLevelMap?: Partial<Record<ModelThinkingLevel, string | null>>;
-  compat: Pick<
-    CompletionsCompat,
-    "supportsReasoningEffort" | "thinkingFormat"
-  >;
+type GuardPolicy = {
+  readonly api: ZenApi;
+  readonly controls: Readonly<Controls>;
+  readonly effort: ReadonlySet<string>;
+  readonly allowedBudgetField: string | undefined;
+  readonly knownBudgetFields: ReadonlySet<string>;
+  readonly format: string | undefined;
 };
 
-const GO_RESPONSES_IDS = new Set(["muse-spark-1.2-contributor", "muse-spark-1.3-contributor"]);
-const builtinGo = new Map<string, Model<Api>>();
-for (const model of getBuiltinModels("opencode-go")) builtinGo.set(model.id, model);
+const LEVELS: ModelThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+const BASIC_LEVELS = new Set(["minimal", "low", "medium", "high"]);
+const NATIVE_RANK: Record<string, number> = { minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 };
+const NO_CONTROLS: Controls = { effort: false, toggle: false, budget: false, off: false };
+const GLM_GO_LEVELS: Record<ModelThinkingLevel, string | null> = {
+  off: null,
+  minimal: "low",
+  low: "low",
+  medium: "high",
+  high: "high",
+  xhigh: "max",
+  max: "max",
+};
 
-function goApiFor(id: string): ZenApi {
-  return GO_RESPONSES_IDS.has(id) ? "openai-responses" : "openai-completions";
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
-// OpenCode Zen exposes three different API styles depending on model family.
-// This mirrors the proven routing in the old curated lists; Models.dev's own
-// `provider.npm` does NOT match it (e.g. grok-4.5 is @ai-sdk/openai upstream
-// but must hit /chat/completions through Zen).
-function zenApiFor(id: string): ZenApi {
-  if (id.startsWith("gpt")) return "openai-responses";
-  if (id.startsWith("claude") || id.startsWith("qwen")) return "anthropic-messages";
-  return "openai-completions";
+function normalized(value: string): string {
+  return value.toLowerCase();
 }
 
-const DEFAULT_THINK = { off: "none", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high" };
+async function fetchJson(url: string, timeoutMs: number): Promise<Acquired<unknown>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-// Models that advertise a "max" reasoning effort get xhigh -> "max"; pi
-// clamps anything a model doesn't support, so the default "high" is safe.
-function thinkMap(m: RawModel) {
-  const supportsMax =
-    Array.isArray(m.reasoning_options) &&
-    m.reasoning_options.some(
-      (option) =>
-        option &&
-        typeof option === "object" &&
-        !Array.isArray(option) &&
-        Array.isArray((option as { values?: unknown }).values) &&
-        ((option as { values: unknown[] }).values.includes("max")),
-    );
-  return supportsMax ? { ...DEFAULT_THINK, xhigh: "max" } : { ...DEFAULT_THINK };
-}
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return { kind: "unavailable" };
 
-function uniqueNatives(values: string[]): string[] {
-  const found = new Set<string>();
-  for (const value of values) {
-    if (value !== "none" && Object.hasOwn(NATIVE_RANK, value)) found.add(value);
+    return { kind: "available", value: await response.json() };
+  } catch {
+    return { kind: "unavailable" };
+  } finally {
+    clearTimeout(timer);
   }
-  return [...found].sort((a, b) => NATIVE_RANK[a] - NATIVE_RANK[b]);
 }
 
-function parseGoThinking(options: unknown, present: boolean): ParsedThinking {
-  if (!present) return { kind: "absent" };
-  if (!Array.isArray(options)) return { kind: "malformed" };
-  if (options.length === 0) return { kind: "empty" };
-  const natives: string[] = [];
-  let off: OffKind = "unverified";
+function catalogSection(catalog: Acquired<unknown>, providerId: string): Acquired<Map<string, Record<string, unknown>>> {
+  if (catalog.kind === "unavailable") return catalog;
+
+  const root = asRecord(catalog.value);
+  const section = root ? asRecord(root[providerId]) : undefined;
+  const models = section ? asRecord(section.models) : undefined;
+  if (!models) return { kind: "unavailable" };
+
+  const value = new Map<string, Record<string, unknown>>();
+  for (const [id, raw] of Object.entries(models)) {
+    const record = asRecord(raw);
+    if (!record) return { kind: "unavailable" };
+    if (record.id !== id) return { kind: "unavailable" };
+
+    value.set(id, record);
+  }
+
+  return { kind: "available", value };
+}
+
+function discoveryIds(discovered: Acquired<unknown>): Acquired<Set<string>> {
+  if (discovered.kind === "unavailable") return discovered;
+
+  const root = asRecord(discovered.value);
+  if (!root || !Array.isArray(root.data)) return { kind: "unavailable" };
+
+  const value = new Set<string>();
+  for (const entry of root.data) {
+    const record = asRecord(entry);
+    if (!record || typeof record.id !== "string" || record.id.length === 0) {
+      return { kind: "unavailable" };
+    }
+
+    value.add(record.id);
+  }
+
+  return { kind: "available", value };
+}
+
+function declaredControls(raw: Record<string, unknown> | undefined): Declared {
+  if (!raw) return { kind: "inherit" };
+  if (raw.reasoning === false) return { kind: "withhold" };
+  if (!Object.hasOwn(raw, "reasoning_options")) return { kind: "inherit" };
+
+  const options = raw.reasoning_options;
+  if (!Array.isArray(options)) return { kind: "inherit" };
+  if (options.length === 0) return { kind: "withhold" };
+
+  const effort: string[] = [];
+  let hasEffort = false;
   let toggle = false;
   let budget = false;
-  let emptyEffort = false;
-  let unsupported = false;
+
   for (const option of options) {
-    if (!option || typeof option !== "object" || Array.isArray(option)) continue;
-    const rec = option as { type?: unknown; values?: unknown };
-    if (rec.type === "effort") {
-      if (!Array.isArray(rec.values)) continue;
-      if (rec.values.length === 0) {
-        emptyEffort = true;
+    const record = asRecord(option);
+    if (!record) return { kind: "withhold" };
+
+    switch (record.type) {
+      case "effort": {
+        hasEffort = true;
+        if (!Array.isArray(record.values)) return { kind: "withhold" };
+
+        for (const value of record.values) {
+          if (value === "none") effort.push("none");
+          else if (typeof value === "string" && Object.hasOwn(NATIVE_RANK, normalized(value))) {
+            effort.push(normalized(value));
+          }
+        }
+
         continue;
       }
-      if (!rec.values.every((value) => value === null || typeof value === "string")) continue;
-      for (const value of rec.values) {
-        if (value === null) {
-          if (off === "unverified") off = "toggle";
-        } else if (value === "none") off = "none";
-        else if (Object.hasOwn(NATIVE_RANK, value)) natives.push(value);
-        else unsupported = true;
-      }
-    } else if (rec.type === "toggle") {
-      toggle = true;
-    } else if (rec.type === "budget_tokens") {
-      budget = true;
-    } else if (typeof rec.type === "string" && rec.type.length > 0) {
-      unsupported = true;
+      case "toggle":
+        toggle = true;
+        continue;
+      case "budget_tokens":
+        budget = true;
+        continue;
+      default:
+        return { kind: "withhold" };
     }
   }
-  if (natives.length || off !== "unverified") {
-    return { kind: "effort", natives: uniqueNatives(natives), off: toggle && off === "unverified" ? "toggle" : off };
-  }
-  if (toggle) return { kind: "toggle", off: "toggle" };
-  if (budget) return { kind: "budget" };
-  if (emptyEffort) return { kind: "empty" };
-  if (unsupported) return { kind: "unsupported" };
-  return { kind: "malformed" };
+
+  if (!hasEffort && !toggle && !budget) return { kind: "withhold" };
+
+  return { kind: "axes", effort: [...new Set(effort)], toggle, budget };
 }
 
-function thinkingFromBuiltin(model: Model<Api>): ParsedThinking {
-  if (!model.reasoning) return { kind: "unsupported" };
-  const map = model.thinkingLevelMap;
-  if (!map) return { kind: "absent" };
-  const values: string[] = [];
-  let off: OffKind = "unverified";
-  for (const [key, value] of Object.entries(map)) {
-    if (typeof value !== "string") continue;
-    if (key === "off" || value === "none") {
-      off = "none";
+function compatOf(model: Model<Api>): Record<string, unknown> {
+  return (model.compat ?? {}) as Record<string, unknown>;
+}
+
+function withCompat(model: Model<Api>, compat: Record<string, unknown>): Model<Api> {
+  return { ...model, compat: compat as Model<Api>["compat"] };
+}
+
+function withheld(model: Model<Api>): Model<Api> {
+  return withCompat(
+    { ...model, reasoning: false, thinkingLevelMap: undefined },
+    { ...model.compat, supportsReasoningEffort: false },
+  );
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function nonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function overlayMetadata(model: Model<Api>, raw: Record<string, unknown> | undefined): Model<Api> {
+  if (!raw) return model;
+
+  const next = { ...model } as unknown as Record<string, unknown>;
+  if (typeof raw.name === "string" && raw.name.length > 0) next.name = raw.name;
+
+  const limit = asRecord(raw.limit);
+  const contextWindow = positiveNumber(limit?.context);
+  if (contextWindow !== undefined) next.contextWindow = contextWindow;
+
+  const maxTokens = positiveNumber(limit?.output);
+  if (maxTokens !== undefined) next.maxTokens = maxTokens;
+
+  const cost = asRecord(raw.cost);
+  if (cost) {
+    const merged: Record<string, unknown> = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      ...(model.cost as unknown as Record<string, unknown>),
+    };
+
+    for (const [target, source] of [
+      ["input", "input"],
+      ["output", "output"],
+      ["cacheRead", "cache_read"],
+      ["cacheWrite", "cache_write"],
+    ] as const) {
+      const value = nonNegativeNumber(cost[source]);
+      if (value !== undefined) merged[target] = value;
+    }
+
+    next.cost = merged;
+  }
+
+  const modalities = asRecord(raw.modalities);
+  if (Array.isArray(modalities?.input)) {
+    const input = modalities.input.filter((value): value is "text" | "image" => value === "text" || value === "image");
+    if (input.length > 0) next.input = input;
+  }
+
+  const interleaved = asRecord(raw.interleaved);
+  if (interleaved?.field === "reasoning_content") {
+    next.compat = { ...model.compat, requiresReasoningContentOnAssistantMessages: true };
+  }
+
+  return next as unknown as Model<Api>;
+}
+
+function verifiedGoGlm(model: Model<Api>): Model<Api> {
+  const compat: Record<string, unknown> = { ...model.compat, supportsReasoningEffort: true };
+  delete compat.thinkingFormat;
+  return {
+    ...withCompat(model, compat),
+    reasoning: true,
+    thinkingLevelMap: { ...GLM_GO_LEVELS },
+  };
+}
+
+function modelEffortValues(model: Model<Api>, allowDefaults: boolean): Set<string> {
+  const values = new Set<string>();
+
+  for (const level of LEVELS) {
+    const value = model.thinkingLevelMap?.[level];
+    if (typeof value === "string") values.add(normalized(value));
+    else if (allowDefaults && value === undefined && BASIC_LEVELS.has(level)) values.add(level);
+  }
+
+  return values;
+}
+
+function budgetField(model: Model<Api>): string | undefined {
+  const compat = compatOf(model);
+
+  if (typeof compat.thinkingTokenBudgetField === "string") return compat.thinkingTokenBudgetField;
+  return compat.supportsThinkingTokenBudget === true ? "thinking_token_budget" : undefined;
+}
+
+function toggleFormat(model: Model<Api>): boolean {
+  const compat = compatOf(model);
+  const format = compat.thinkingFormat;
+  const namedFormats = ["zai", "qwen", "qwen-chat-template", "deepseek", "together"];
+  if (namedFormats.includes(String(format))) return true;
+
+  if (format === "chat-template" || format === "baseten") {
+    const source = format === "chat-template" ? compat.chatTemplateKwargs : compat.chatTemplateArgs;
+    const values = asRecord(source);
+    const toggleKeys = ["enable_thinking", "thinking", "preserve_thinking"];
+    return values !== undefined && toggleKeys.some((key) => Object.hasOwn(values, key));
+  }
+
+  return false;
+}
+
+function builtinEvidence(model: Model<Api>): ControlEvidence {
+  const compat = compatOf(model);
+  const mapped = modelEffortValues(model, false);
+  const hasMappedEffort = mapped.size > 0;
+
+  let effort = false;
+  let toggle = false;
+  let budget = false;
+  let budgetFieldName: string | undefined;
+
+  switch (model.api) {
+    case "openai-completions": {
+      effort = compat.supportsReasoningEffort !== false &&
+        (compat.supportsReasoningEffort === true || hasMappedEffort);
+      toggle = toggleFormat(model);
+      budgetFieldName = budgetField(model);
+      budget = budgetFieldName !== undefined;
+      break;
+    }
+    case "openai-responses":
+      effort = compat.supportsReasoningEffort !== false && hasMappedEffort;
+      break;
+    case "anthropic-messages": {
+      const adaptive = compat.forceAdaptiveThinking === true || compat.supportsMidConvoEffort === true;
+      effort = adaptive && (hasMappedEffort || compat.forceAdaptiveThinking === true || compat.supportsMidConvoEffort === true);
+      toggle = model.reasoning;
+      budget = model.reasoning && !adaptive;
+      break;
+    }
+    case "google-generative-ai":
+      effort = hasMappedEffort;
+      toggle = model.reasoning;
+      break;
+  }
+
+  const effortValues = modelEffortValues(model, effort);
+  const publishedOff = model.thinkingLevelMap?.off;
+  const effortOff = effort && typeof publishedOff === "string";
+  const toggleOff = toggle && publishedOff !== null;
+  const off = effortOff || toggleOff;
+  if (off && effortOff) effortValues.add(normalized(publishedOff));
+
+  return { controls: { effort, toggle, budget, off }, effortValues, budgetField: budgetFieldName, effortOff, toggleOff };
+}
+
+function restrictEvidence(model: Model<Api>, evidence: ControlEvidence, declared: Declared): ControlEvidence {
+  if (declared.kind === "inherit") return evidence;
+  if (declared.kind === "withhold") {
+    return { controls: NO_CONTROLS, effortValues: new Set(), budgetField: evidence.budgetField, effortOff: false, toggleOff: false };
+  }
+
+  const publishedOff = model.thinkingLevelMap?.off;
+  const publishedOffName = normalized(String(publishedOff));
+  const effortValues = new Set(
+    [...evidence.effortValues].filter((value) =>
+      declared.effort.includes(value) && value !== normalized(publishedOff ?? ""),
+    ),
+  );
+  const offFromEffort = evidence.effortOff && declared.effort.includes(publishedOffName);
+  const toggle = evidence.controls.toggle && declared.toggle;
+
+  const compat = compatOf(model);
+  const adaptiveDependency = model.api === "anthropic-messages" &&
+    (compat.forceAdaptiveThinking === true || compat.supportsMidConvoEffort === true) &&
+    evidence.controls.effort && effortValues.size > 0;
+  const formatDependency = model.api === "openai-completions" && evidence.controls.toggle &&
+    evidence.controls.effort && effortValues.size > 0 &&
+    ["deepseek", "qwen", "zai", "together"].includes(String(compat.thinkingFormat));
+  const budgetDependency = model.api === "anthropic-messages" && evidence.controls.budget && declared.budget;
+  const effectiveToggle = toggle || adaptiveDependency || formatDependency || budgetDependency;
+
+  const budget = evidence.controls.budget &&
+    (declared.budget || (declared.toggle && model.api === "anthropic-messages"));
+  const off = (offFromEffort || (toggle && evidence.toggleOff)) && publishedOff !== null;
+  if (off && evidence.effortOff) effortValues.add(publishedOffName);
+
+  const remainingEffort = [...effortValues].some((value) => value !== publishedOffName);
+  const hasEffort = evidence.controls.effort && effortValues.size > 0 && remainingEffort;
+
+  return {
+    controls: { effort: hasEffort, toggle: effectiveToggle, budget, off },
+    effortValues,
+    budgetField: evidence.budgetField,
+    effortOff: offFromEffort,
+    toggleOff: toggle && evidence.toggleOff,
+  };
+}
+
+function projectControls(model: Model<Api>, evidence: ControlEvidence): Model<Api> {
+  const { effort, toggle, budget, off } = evidence.controls;
+  if (!effort && !toggle && !budget && !off) return withheld(model);
+
+  const thinkingLevelMap: Record<string, string | null> = {};
+  const publishedOff = model.thinkingLevelMap?.off;
+  if (off) {
+    if (typeof publishedOff === "string") thinkingLevelMap.off = publishedOff;
+  } else {
+    thinkingLevelMap.off = null;
+  }
+
+  for (const level of LEVELS) {
+    if (!effort) {
+      const highStaysUnmapped = level === "high" && (toggle || budget);
+      if (highStaysUnmapped) continue;
+
+      thinkingLevelMap[level] = null;
       continue;
     }
-    values.push(value);
-  }
-  const natives = uniqueNatives(values);
-  if (!natives.length) return off === "none" ? { kind: "toggle", off } : { kind: "absent" };
-  return { kind: "effort", natives, off };
-}
 
-function aliasMap(
-  natives: readonly string[],
-  off: OffKind,
-  id: string,
-  format: ThinkingFormat | undefined,
-): Record<ModelThinkingLevel, string | null> {
-  const pick = (rank: number) => {
-    for (const value of natives) {
-      if (NATIVE_RANK[value] >= rank) return value;
+    const published = model.thinkingLevelMap?.[level];
+    let mapped: string | undefined;
+    if (typeof published === "string") mapped = normalized(published);
+    else if (published === undefined && BASIC_LEVELS.has(level)) mapped = level;
+
+    if (mapped !== undefined && evidence.effortValues.has(mapped)) {
+      thinkingLevelMap[level] = typeof published === "string" ? published : level;
+      continue;
     }
-    return null;
-  };
+
+    thinkingLevelMap[level] = null;
+  }
+
+  const compat: Record<string, unknown> = { ...model.compat };
+  if (model.api === "openai-completions") compat.supportsReasoningEffort = effort;
+
+  const projected = { ...model, reasoning: true, thinkingLevelMap: thinkingLevelMap as Model<Api>["thinkingLevelMap"] };
+  return withCompat(projected, compat);
+}
+
+function resolveModel(
+  providerId: string,
+  builtin: Model<Api>,
+  raw: Record<string, unknown> | undefined,
+): ResolvedModel {
+  const verified = isVerifiedGoGlm(providerId, builtin) ? verifiedGoGlm(builtin) : { ...builtin };
+  const metadata = overlayMetadata(verified, raw);
+  const evidence = restrictEvidence(verified, builtinEvidence(verified), declaredControls(raw));
+
+  const model = { ...projectControls(metadata, evidence), provider: providerId } as Model<Api>;
+
+  const effort = new Set<string>();
+  if (evidence.controls.effort) {
+    for (const value of evidence.effortValues) effort.add(normalized(value));
+  }
+
+  if (evidence.controls.off && evidence.effortOff) {
+    const publishedOff = verified.thinkingLevelMap?.off;
+    if (typeof publishedOff === "string") effort.add(normalized(publishedOff));
+  }
+
   return {
-    off: id === DS_FLASH_ID || off === "none" || (off === "toggle" && format) ? "none" : null,
-    minimal: pick(1),
-    low: pick(2),
-    medium: pick(3),
-    high: pick(4),
-    xhigh: pick(5),
-    max: pick(6),
+    model,
+    nativeOutput: builtin.reasoning,
+    controls: evidence.controls,
+    effort,
+    budgetField: evidence.budgetField,
   };
 }
 
-function toggleFormat(id: string, api: ZenApi): ThinkingFormat | undefined {
-  if (api !== "openai-completions") return undefined;
-  if (id.startsWith("deepseek")) return "deepseek";
-  const builtin = builtinGo.get(id);
-  if (!builtin || builtin.api !== api || !builtin.compat) return undefined;
-  const format = "thinkingFormat" in builtin.compat ? builtin.compat.thinkingFormat : undefined;
-  return typeof format === "string" && TOGGLE_FORMATS.has(format) ? (format as ThinkingFormat) : undefined;
+function resolveGroup(
+  providerId: string,
+  builtins: Model<Api>[],
+  section: Acquired<Map<string, Record<string, unknown>>>,
+  discovered: Acquired<Set<string>>,
+): ResolvedModel[] {
+  const resolved: ResolvedModel[] = [];
+
+  for (const builtin of builtins) {
+    const publishedIds = section.kind === "available" ? section.value : undefined;
+    if (publishedIds && !publishedIds.has(builtin.id)) continue;
+
+    const discoveredIds = discovered.kind === "available" ? discovered.value : undefined;
+    if (discoveredIds && !discoveredIds.has(builtin.id)) continue;
+
+    const raw = section.kind === "available" ? section.value.get(builtin.id) : undefined;
+    resolved.push(resolveModel(providerId, builtin, raw));
+  }
+
+  return resolved;
 }
 
-function goThinkingFor(model: GoThinkingInput, api: ZenApi): GoThinkingConfig {
-  const closed: GoThinkingConfig = { reasoning: false, compat: { supportsReasoningEffort: false } };
-  if (GO_AUTOMATIC_THINKING_IDS.has(model.id)) return closed;
-  if (Object.hasOwn(model, "reasoning") && model.reasoning === false) {
-    return { reasoning: false, compat: {} };
+function hasHeader(headers: Record<string, string | null> | undefined, name: string): boolean {
+  const expected = name.toLowerCase();
+  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === expected);
+}
+
+function withTitleHeader<T extends StreamOptions | SimpleStreamOptions>(model: Model<Api>, options: T): T {
+  if (hasHeader(model.headers, "x-title") || hasHeader(options.headers, "x-title")) return options;
+  return { ...options, headers: { ...options.headers, ...TITLE_HEADERS } } as T;
+}
+
+function privateRequestModel(model: Model<Api>, record: ResolvedModel): Model<Api> {
+  const publishedCompat = compatOf(record.model);
+  const requestCompat: Record<string, unknown> = { ...record.model.compat, ...model.compat };
+  const publishedCompatKeys = [
+    "thinkingFormat",
+    "forceAdaptiveThinking",
+    "supportsMidConvoEffort",
+    "thinkingTokenBudgetField",
+    "supportsThinkingTokenBudget",
+    "requiresReasoningContentOnAssistantMessages",
+  ];
+
+  for (const key of publishedCompatKeys) {
+    if (Object.hasOwn(publishedCompat, key)) requestCompat[key] = publishedCompat[key];
+    else delete requestCompat[key];
   }
-  let parsed = parseGoThinking(model.reasoning_options, Object.hasOwn(model, "reasoning_options"));
-  if (parsed.kind === "absent" || parsed.kind === "malformed") {
-    const builtin = builtinGo.get(model.id);
-    if (builtin && builtin.api === api) parsed = thinkingFromBuiltin(builtin);
+
+  const publishedOff = record.model.thinkingLevelMap?.off;
+  const nativeEffortOff =
+    record.controls.off &&
+    typeof publishedOff === "string" &&
+    record.effort.has(normalized(publishedOff));
+  requestCompat.supportsReasoningEffort = record.controls.effort || nativeEffortOff;
+
+  if (model.api === "anthropic-messages" && !record.controls.effort) delete requestCompat.supportsMidConvoEffort;
+  if (model.api === "openai-completions" && !record.controls.budget) {
+    delete requestCompat.thinkingTokenBudgetField;
+    requestCompat.supportsThinkingTokenBudget = false;
   }
-  if (parsed.kind === "effort") {
-    const toggle = parsed.off === "toggle" ? toggleFormat(model.id, api) : undefined;
-    const format = toggle === "qwen-chat-template" ? undefined : toggle;
-    const compat: GoThinkingConfig["compat"] = { supportsReasoningEffort: true };
-    if (format) compat.thinkingFormat = format;
-    const thinkingLevelMap = aliasMap(parsed.natives, parsed.off, model.id, format);
-    if (!Object.values(thinkingLevelMap).some((value) => value !== null)) return closed;
-    return { reasoning: true, thinkingLevelMap, compat };
+
+  return {
+    ...model,
+    reasoning: record.nativeOutput,
+    thinkingLevelMap: record.model.thinkingLevelMap,
+    compat: requestCompat as Model<Api>["compat"],
+  };
+}
+
+function enforceEffortValue(record: Record<string, unknown>, key: string, allowed: ReadonlySet<string>, allowOff: boolean): void {
+  const value = record[key];
+  if (typeof value !== "string") {
+    delete record[key];
+    return;
   }
-  if (parsed.kind === "toggle") {
-    const format = toggleFormat(model.id, api);
-    if (!format) return closed;
-    return {
-      reasoning: true,
-      thinkingLevelMap: { off: "none", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null },
-      compat: { supportsReasoningEffort: false, thinkingFormat: format },
+  const canonical = normalized(value);
+  if (!allowed.has(canonical) || (canonical === "none" && !allowOff)) delete record[key];
+}
+
+function enforceEffortField(record: Record<string, unknown>, key: string, policy: GuardPolicy): void {
+  if (policy.controls.effort) {
+    enforceEffortValue(record, key, policy.effort, policy.controls.off);
+    return;
+  }
+
+  const value = record[key];
+  const isNativeOffValue = policy.controls.off && typeof value === "string" && normalized(value) === "none";
+  if (!isNativeOffValue) {
+    delete record[key];
+    return;
+  }
+
+  enforceEffortValue(record, key, policy.effort, policy.controls.off);
+}
+
+function validBudget(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function enforceTemplateControls(value: unknown, policy: GuardPolicy): void {
+  const template = asRecord(value);
+  if (!template) return;
+
+  const templateFormat = policy.format === "chat-template" || policy.format === "qwen-chat-template" || policy.format === "baseten";
+  if (!policy.controls.toggle || !templateFormat) {
+    delete template.enable_thinking;
+    delete template.preserve_thinking;
+    delete template.thinking;
+  } else {
+    if (typeof template.enable_thinking !== "boolean") delete template.enable_thinking;
+    else if (!template.enable_thinking && !policy.controls.off) delete template.enable_thinking;
+    if (typeof template.preserve_thinking !== "boolean") delete template.preserve_thinking;
+  }
+
+  if (!policy.controls.effort || !templateFormat) delete template.reasoning_effort;
+  else enforceEffortValue(template, "reasoning_effort", policy.effort, policy.controls.off);
+
+  for (const field of ["budget_tokens", "thinking_token_budget", ...policy.knownBudgetFields]) {
+    if (!policy.controls.budget || !templateFormat || !validBudget(template[field])) delete template[field];
+  }
+}
+
+function enforceControls(payload: unknown, policy: GuardPolicy): unknown {
+  const payloadRecord = asRecord(payload);
+  if (!payloadRecord) return payload;
+
+  switch (policy.api) {
+    case "openai-completions":
+      return enforceCompletionsPayload(payloadRecord, policy);
+    case "openai-responses":
+      return enforceResponsesPayload(payloadRecord, policy);
+    case "anthropic-messages":
+      return enforceAnthropicPayload(payloadRecord, policy);
+    case "google-generative-ai":
+      return enforceGooglePayload(payloadRecord, policy);
+  }
+}
+
+function enforceCompletionsPayload(payloadRecord: Record<string, unknown>, policy: GuardPolicy): Record<string, unknown> {
+  const guarded = { ...payloadRecord };
+  enforceEffortField(guarded, "reasoning_effort", policy);
+
+  const reasoning = asRecord(guarded.reasoning);
+  if (reasoning && ["openrouter", "ant-ling", "together"].includes(String(policy.format))) {
+    enforceEffortField(reasoning, "effort", policy);
+    if (!policy.controls.toggle || typeof reasoning.enabled !== "boolean" || (!reasoning.enabled && !policy.controls.off)) delete reasoning.enabled;
+    if (Object.keys(reasoning).length === 0) delete guarded.reasoning;
+  } else {
+    delete guarded.reasoning;
+  }
+
+  if (typeof guarded.thinking === "string" && policy.format === "string-thinking") {
+    enforceEffortField(guarded, "thinking", policy);
+  } else {
+    const thinking = asRecord(guarded.thinking);
+    const type = thinking?.type;
+    const allowedType = policy.controls.toggle && ["deepseek", "zai"].includes(String(policy.format)) &&
+      (type === "enabled" || (type === "disabled" && policy.controls.off));
+    if (thinking && allowedType) {
+      const sanitized: Record<string, unknown> = { type };
+      if (policy.format === "zai" && typeof thinking.clear_thinking === "boolean") {
+        sanitized.clear_thinking = thinking.clear_thinking;
+      }
+      guarded.thinking = sanitized;
+    } else {
+      delete guarded.thinking;
+    }
+  }
+
+  if (policy.format !== "qwen" || !policy.controls.toggle) delete guarded.enable_thinking;
+  else if (typeof guarded.enable_thinking !== "boolean" || (!guarded.enable_thinking && !policy.controls.off)) delete guarded.enable_thinking;
+
+  enforceTemplateControls(guarded.chat_template_kwargs, policy);
+  enforceTemplateControls(guarded.chat_template_args, policy);
+
+  const budgetFields = new Set(["budget_tokens", "thinking_token_budget", ...policy.knownBudgetFields]);
+  for (const field of budgetFields) {
+    if (!policy.controls.budget || field !== policy.allowedBudgetField || !validBudget(guarded[field])) delete guarded[field];
+  }
+
+  return guarded;
+}
+
+function enforceResponsesPayload(payloadRecord: Record<string, unknown>, policy: GuardPolicy): Record<string, unknown> {
+  const guarded = { ...payloadRecord };
+
+  const reasoning = asRecord(guarded.reasoning);
+  if (reasoning) {
+    enforceEffortField(reasoning, "effort", policy);
+    if (!policy.controls.toggle) delete reasoning.enabled;
+    if (Object.keys(reasoning).length === 0) delete guarded.reasoning;
+  }
+
+  return guarded;
+}
+
+function enforceAnthropicPayload(payloadRecord: Record<string, unknown>, policy: GuardPolicy): Record<string, unknown> {
+  const guarded = { ...payloadRecord };
+
+  const outputConfig = asRecord(guarded.output_config);
+  if (outputConfig) {
+    enforceEffortField(outputConfig, "effort", policy);
+    if (Object.keys(outputConfig).length === 0) delete guarded.output_config;
+  }
+
+  const thinking = asRecord(guarded.thinking);
+  if (thinking) {
+    const type = thinking.type;
+    let allowedType = false;
+    switch (type) {
+      case "disabled":
+        allowedType = policy.controls.off;
+        break;
+      case "adaptive":
+        allowedType = policy.format === "adaptive" && (policy.controls.effort || policy.controls.toggle);
+        break;
+      case "enabled":
+        allowedType = policy.format === "budget" && (policy.controls.toggle || policy.controls.budget);
+        break;
+    }
+
+    if (!allowedType) {
+      delete guarded.thinking;
+    } else if (type === "enabled") {
+      const budgetTokens = thinking.budget_tokens;
+      const outputCap = positiveNumber(guarded.max_tokens);
+      const budgetPermitted = policy.controls.budget && validBudget(budgetTokens);
+      const budgetFits = budgetPermitted && Number(budgetTokens) >= 1024 && (outputCap === undefined || Number(budgetTokens) < outputCap);
+      if (!budgetFits) delete guarded.thinking;
+    } else {
+      delete thinking.budget_tokens;
+      if (type === "disabled" && Object.keys(thinking).some((key) => key !== "type")) delete guarded.thinking;
+    }
+  }
+
+  for (const field of ["budget_tokens", "thinking_token_budget", ...policy.knownBudgetFields]) delete guarded[field];
+
+  return guarded;
+}
+
+function enforceGooglePayload(payloadRecord: Record<string, unknown>, policy: GuardPolicy): Record<string, unknown> {
+  const guarded = { ...payloadRecord };
+
+  const config = asRecord(guarded.config);
+  const thinking = config ? asRecord(config.thinkingConfig) : undefined;
+  if (thinking) {
+    enforceEffortField(thinking, "thinkingLevel", policy);
+    if (typeof thinking.thinkingLevel === "string") thinking.thinkingLevel = thinking.thinkingLevel.toUpperCase();
+    if (!policy.controls.budget || !validBudget(thinking.thinkingBudget)) delete thinking.thinkingBudget;
+    if (typeof thinking.includeThoughts !== "boolean") delete thinking.includeThoughts;
+    if (Object.keys(thinking).length === 0) delete config?.thinkingConfig;
+  }
+
+  return guarded;
+}
+
+function publishedThinkingFormat(api: ZenApi, publishedCompat: Record<string, unknown>): string | undefined {
+  if (api === "anthropic-messages") {
+    if (publishedCompat.forceAdaptiveThinking === true || publishedCompat.supportsMidConvoEffort === true) return "adaptive";
+    return "budget";
+  }
+
+  if (typeof publishedCompat.thinkingFormat === "string") return publishedCompat.thinkingFormat;
+  return undefined;
+}
+
+function guardedStreams(
+  stock: ProviderStreams,
+  records: Map<string, ResolvedModel>,
+  providerId: string,
+  api: ZenApi,
+): ProviderStreams {
+  const resolveRoute = (model: Model<Api>) => {
+    const found = records.get(model.id);
+    if (!found) throw new Error(`Unverified OpenCode route: ${model.provider}/${model.id}/${model.api}`);
+
+    const record = found;
+    const routeMatches =
+      model.provider === providerId &&
+      record.model.provider === providerId &&
+      model.api === api &&
+      record.model.api === api;
+    if (!routeMatches) throw new Error(`Unverified OpenCode route: ${model.provider}/${model.id}/${model.api}`);
+
+    return { record, request: privateRequestModel(model, record) };
+  };
+
+  const guardOptions = <T extends StreamOptions | SimpleStreamOptions>(model: Model<Api>, options: T | undefined): T => {
+    const { record } = resolveRoute(model);
+
+    const knownBudgetFields = new Set<string>();
+    if (record.budgetField) knownBudgetFields.add(record.budgetField);
+    const callerBudgetField = budgetField(model);
+    if (callerBudgetField) knownBudgetFields.add(callerBudgetField);
+
+    const onPayload = options?.onPayload;
+    const publishedCompat = compatOf(record.model);
+    const policy: GuardPolicy = {
+      api,
+      controls: record.controls,
+      effort: record.effort,
+      allowedBudgetField: record.controls.budget ? record.budgetField : undefined,
+      knownBudgetFields,
+      format: publishedThinkingFormat(api, publishedCompat),
     };
-  }
-  return closed;
-}
 
-function applyGoThinking(cfg: ProtocolModelConfig, model: GoThinkingInput): ProtocolModelConfig {
-  const thinking = goThinkingFor(model, cfg.api);
-  cfg.reasoning = thinking.reasoning;
-  if (thinking.thinkingLevelMap) cfg.thinkingLevelMap = thinking.thinkingLevelMap;
-  else delete cfg.thinkingLevelMap;
-  cfg.compat = { ...cfg.compat, ...thinking.compat };
-  return cfg;
-}
+    const withHeaders = withTitleHeader(model, (options ?? {}) as T);
 
-function interleavedField(m: Pick<RawModel, "interleaved">): string | undefined {
-  const raw = m.interleaved;
-  if (typeof raw === "string") return raw;
-  return typeof raw === "object" ? raw?.field : undefined;
-}
+    return {
+      ...withHeaders,
+      onPayload: async (payload: unknown) => {
+        const replacement = onPayload ? await onPayload(payload, model) : undefined;
+        return enforceControls(replacement === undefined ? payload : replacement, policy);
+      },
+    } as T;
+  };
 
-function compatFor(m: Pick<RawModel, "id" | "interleaved">, api: ZenApi): CompletionsCompat {
-  const compat: CompletionsCompat = { supportsDeveloperRole: api === "openai-responses" };
-  if (m.id.startsWith("deepseek")) compat.thinkingFormat = "deepseek";
-  // Thinking-mode upstreams (DeepSeek, GLM, Kimi, MiMo, LongCat, ...) 400 with
-  // "The `reasoning_content` in the thinking mode must be passed back to the
-  // API" when an assistant message in the history omits reasoning_content.
-  // pi only auto-detects that from provider/baseUrl deepseek.com, which
-  // opencode.ai never matches, so we take the signal from the catalog instead
-  // (deepseek by id as a fallback when the catalog is unreachable).
-  if (
-    api === "openai-completions" &&
-    (interleavedField(m) === "reasoning_content" || m.id.startsWith("deepseek"))
-  ) {
-    compat.requiresReasoningContentOnAssistantMessages = true;
-  }
-  return compat;
-}
-
-function toConfig(m: RawModel, api: ZenApi): ProtocolModelConfig {
-  const input = (m.modalities?.input ?? ["text"]).filter(
-    (x): x is "text" | "image" => x === "text" || x === "image",
-  );
-  const cost = m.cost ?? {};
-  const cfg: ProtocolModelConfig = {
-    id: m.id,
-    name: m.name,
-    api,
-    reasoning: !!m.reasoning,
-    input: input.length ? input : ["text"],
-    contextWindow: m.limit?.context ?? 200000,
-    maxTokens: m.limit?.output ?? 32768,
-    cost: {
-      input: cost.input ?? 0,
-      output: cost.output ?? 0,
-      cacheRead: cost.cache_read ?? 0,
-      cacheWrite: cost.cache_write ?? 0,
+  return {
+    stream: (model: Model<Api>, context: TranscriptContext, options?: StreamOptions) => {
+      const { request } = resolveRoute(model);
+      return stock.stream(request, context, guardOptions(model, options ?? { headers: undefined }));
     },
-    compat: compatFor(m, api),
+    streamSimple: (model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions) => {
+      const { record, request } = resolveRoute(model);
+
+      const clampedLevel = options?.reasoning ? clampThinkingLevel(record.model, options.reasoning) : undefined;
+      const clampedOptions = {
+        ...options,
+        reasoning: clampedLevel === "off" ? undefined : clampedLevel,
+      };
+
+      return stock.streamSimple(request, context, guardOptions(model, clampedOptions));
+    },
   };
-  if (cfg.reasoning) cfg.thinkingLevelMap = thinkMap(m);
-  return cfg;
 }
 
-// Degraded entry when the catalog is unreachable: keep the model usable with
-// default metadata rather than dropping it entirely.
-function defaultConfig(id: string, api: ZenApi): ProtocolModelConfig {
-  return {
+function nativeProvider(
+  id: string,
+  name: string,
+  baseUrl: string,
+  apiKeyEnv: string,
+  stock: ProviderStreams,
+  models: ResolvedModel[],
+  apis: ZenApi[],
+): Provider<Api> {
+  const records = new Map(models.map((entry) => [entry.model.id, entry]));
+  const api: Partial<Record<Api, ProviderStreams>> = {};
+  for (const entry of apis) api[entry] = guardedStreams(stock, records, id, entry);
+
+  return createProvider<Api>({
     id,
-    name: id,
+    name,
+    baseUrl,
+    headers: { ...TITLE_HEADERS },
+    auth: { apiKey: envApiKeyAuth(`${name} API key`, [apiKeyEnv]) },
+    models: models.map((entry) => entry.model),
     api,
-    reasoning: true,
-    input: ["text"],
-    contextWindow: 200000,
-    maxTokens: 32768,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    compat: compatFor({ id }, api),
-    thinkingLevelMap: { ...DEFAULT_THINK },
-  };
+  });
 }
 
-async function fetchJson(url: string, timeoutMs: number): Promise<unknown | null> {
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(t);
-    return res.ok ? await res.json() : null;
-  } catch {
-    return null;
-  }
+function splitByApi(models: Model<Api>[], api: ZenApi): Model<Api>[] {
+  return models.filter((model) => model.api === api);
 }
 
-// OpenCode's own /models only lists ids (no metadata), so we use it purely to
-// drop models that are disabled/removed for the authenticated workspace.
-async function liveIds(base: string): Promise<Set<string>> {
-  const json = await fetchJson(`${base}/models`, 10000);
-  if (!json || typeof json !== "object") return new Set();
-  const data = (json as { data?: { id: string }[] }).data ?? [];
-  return new Set(data.map((m) => m.id));
-}
-
-function splitZen(models: RawModel[]) {
-  return {
-    responses: models.filter((m) => zenApiFor(m.id) === "openai-responses").map((m) => toConfig(m, "openai-responses")),
-    messages: models.filter((m) => zenApiFor(m.id) === "anthropic-messages").map((m) => toConfig(m, "anthropic-messages")),
-    completions: models.filter((m) => zenApiFor(m.id) === "openai-completions").map((m) => toConfig(m, "openai-completions")),
-  };
+function isVerifiedGoGlm(providerId: string, model: Model<Api>): boolean {
+  return providerId === "opencode-go" && model.id === VERIFIED_GO_GLM;
 }
 
 export default async function (pi: ExtensionAPI) {
-  const [catalog, zenLive, goLive] = await Promise.all([
+  const [catalog, zenDiscovered, goDiscovered] = await Promise.all([
     fetchJson(CATALOG_URL, 20000),
-    liveIds(ZEN_BASE),
-    liveIds(GO_BASE),
+    fetchJson(`${ZEN_BASE}/models`, 10000),
+    fetchJson(`${GO_BASE}/models`, 10000),
   ]);
 
-  const raw = catalog && typeof catalog === "object" ? (catalog as Record<string, { models?: Record<string, RawModel> }>) : null;
-  const zenRaw = raw?.opencode?.models ? Object.values(raw.opencode.models) : null;
-  const goRaw = raw?.["opencode-go"]?.models ? Object.values(raw["opencode-go"].models) : null;
+  const zenSection = catalogSection(catalog, "opencode");
+  const goSection = catalogSection(catalog, "opencode-go");
+  const zenIds = discoveryIds(zenDiscovered);
+  const goIds = discoveryIds(goDiscovered);
 
-  let zen: ReturnType<typeof splitZen>;
-  let go: ProtocolModelConfig[];
+  const zenBuiltins = getBuiltinModels("opencode") as Model<Api>[];
+  const goBuiltins = getBuiltinModels("opencode-go") as Model<Api>[];
+  const mainBuiltins = zenBuiltins.filter(
+    (model) => model.api === "openai-responses" || model.api === "google-generative-ai",
+  );
 
-  if (zenRaw && goRaw) {
-    const keep = (ids: Set<string>) => (m: RawModel) => ids.size === 0 || ids.has(m.id);
-    zen = splitZen(zenRaw.filter(keep(zenLive)));
-    go = goRaw.filter(keep(goLive)).map((m) => applyGoThinking(toConfig(m, goApiFor(m.id)), m));
-  } else {
-    // Catalog unreachable: fall back to OpenCode's live id list with defaults.
-    const idsTo = (ids: Set<string>, api: ZenApi) => [...ids].map((id) => defaultConfig(id, api));
-    zen = {
-      responses: idsTo(new Set([...zenLive].filter((id) => zenApiFor(id) === "openai-responses")), "openai-responses"),
-      messages: idsTo(new Set([...zenLive].filter((id) => zenApiFor(id) === "anthropic-messages")), "anthropic-messages"),
-      completions: idsTo(new Set([...zenLive].filter((id) => zenApiFor(id) === "openai-completions")), "openai-completions"),
-    };
-    go = [...goLive].map((id) => applyGoThinking(defaultConfig(id, goApiFor(id)), { id }));
-  }
+  const main = resolveGroup("opencode", mainBuiltins, zenSection, zenIds);
+  const anthropicAlias = resolveGroup(
+    "opencode-zen-anthropic",
+    splitByApi(zenBuiltins, "anthropic-messages"),
+    zenSection,
+    zenIds,
+  );
+  const completionsAlias = resolveGroup(
+    "opencode-zen-compat",
+    splitByApi(zenBuiltins, "openai-completions"),
+    zenSection,
+    zenIds,
+  );
+  const go = resolveGroup("opencode-go", goBuiltins, goSection, goIds);
 
-  // ── OpenCode Zen (pay-as-you-go) ──
-  pi.registerProvider("opencode", {
-    name: "OpenCode Zen",
-    baseUrl: ZEN_BASE,
-    apiKey: "$OPENCODE_ZEN_API_KEY",
-    api: "openai-responses",
-    headers: { "X-Title": "pi-agent" },
-    models: zen.responses,
-  });
+  const zenStock = opencodeProvider();
+  const goStock = opencodeGoProvider();
 
-  pi.registerProvider("opencode-zen-anthropic", {
-    name: "OpenCode Zen (Anthropic)",
-    baseUrl: ZEN_BASE,
-    apiKey: "$OPENCODE_ZEN_API_KEY",
-    api: "anthropic-messages",
-    headers: { "X-Title": "pi-agent" },
-    models: zen.messages,
-  });
-
-  pi.registerProvider("opencode-zen-compat", {
-    name: "OpenCode Zen (Compat)",
-    baseUrl: ZEN_BASE,
-    apiKey: "$OPENCODE_ZEN_API_KEY",
-    api: "openai-completions",
-    headers: { "X-Title": "pi-agent" },
-    models: zen.completions,
-  });
-
-  // ── OpenCode Go ($10/mo subscription) ──
-  pi.registerProvider("opencode-go", {
-    name: "OpenCode Go",
-    baseUrl: GO_BASE,
-    apiKey: "$OPENCODE_GO_API_KEY",
-    api: "openai-completions",
-    headers: { "X-Title": "pi-agent" },
-    models: go,
-  });
+  pi.registerProvider(
+    nativeProvider("opencode", "OpenCode Zen", ZEN_BASE, ZEN_API_KEY, zenStock, main, [
+      "openai-responses",
+      "google-generative-ai",
+    ]),
+  );
+  pi.registerProvider(
+    nativeProvider(
+      "opencode-zen-anthropic",
+      "OpenCode Zen (Anthropic)",
+      ZEN_BASE,
+      ZEN_API_KEY,
+      zenStock,
+      anthropicAlias,
+      ["anthropic-messages"],
+    ),
+  );
+  pi.registerProvider(
+    nativeProvider(
+      "opencode-zen-compat",
+      "OpenCode Zen (Compat)",
+      ZEN_BASE,
+      ZEN_API_KEY,
+      zenStock,
+      completionsAlias,
+      ["openai-completions"],
+    ),
+  );
+  pi.registerProvider(
+    nativeProvider("opencode-go", "OpenCode Go", GO_BASE, GO_API_KEY, goStock, go, [
+      "anthropic-messages",
+      "openai-completions",
+      "openai-responses",
+    ]),
+  );
 }
