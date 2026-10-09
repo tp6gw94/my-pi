@@ -41,6 +41,12 @@ async function setup(t, overrides = {}) {
 
 async function running(fleet, taskId) { await eventually(async () => (await fleet.status(taskId)).status === "running", "RPC prompt acceptance"); }
 
+const assistantStart = () => ({ type: "message_start", message: { role: "assistant", content: [] } });
+const textDelta = (delta) => ({ type: "text_delta", delta });
+const assistantUpdate = (assistantMessageEvent, usage) => ({ type: "message_update", ...(usage === undefined ? {} : { usage }), assistantMessageEvent });
+const assistantEnd = (text, usage) => ({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }], stopReason: "stop", ...(usage === undefined ? {} : { usage }) } });
+const settleWith = (child, text, usage) => { child.record(assistantEnd(text, usage)); child.record({ type: "agent_settled" }); };
+
 test("async returns an ID promptly, acceptance is not completion, and wait/result expose settled text", async (t) => {
   const { fleet, children } = await setup(t);
   const accepted = await fleet.run(taskSpec());
@@ -377,4 +383,267 @@ test("settled without an authoritative terminal assistant is a failure, not a co
   children[0].record({ type: "agent_settled" });
   const result = await fleet.wait(task.taskId);
   assert.equal(result.status, "failed"); assert.equal(result.error, "RPC settled without a final assistant response");
+});
+
+test("per-response TPS exposes a live paired sample and reconciles final usage against the observed window", async (t) => {
+  let clock = 1000;
+  const { fleet, children } = await setup(t, { monotonic: () => clock });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate(textDelta("b"), { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 12.5);
+  assert.equal(fleet.list().find((task) => task.taskId === run.taskId).tps, 12.5);
+  clock = 9000;
+  child.record(assistantEnd("ab", { output: 40 }));
+  child.record(assistantEnd("ab", { output: 100 }));
+  child.record(assistantUpdate(textDelta("x")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "abx");
+  assert.equal((await fleet.status(run.taskId)).tps, 20);
+  child.record({ type: "agent_settled" });
+  const result = await fleet.wait(run.taskId);
+  assert.equal(result.status, "completed");
+  assert.equal(result.tps, 20);
+});
+
+test("thinking, toolcall, and usage-only updates advance trusted accounting against existing delta endpoints", async (t) => {
+  let clock = 1000;
+  const { fleet, children } = await setup(t, { monotonic: () => clock });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate({ type: "thinking_delta", delta: "think" }, { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 12.5);
+  clock = 5000;
+  child.record(assistantUpdate({ type: "toolcall_delta", delta: "{}" }, { output: 40 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 10);
+  clock = 9000;
+  child.record(assistantUpdate({ type: "text_end" }, { output: 45 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 11.25);
+});
+
+test("a later delta without trusted usage keeps the paired sample and a missing final usage is unknown", async (t) => {
+  let clock = 1000;
+  const { fleet, children } = await setup(t, { monotonic: () => clock });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate(textDelta("b"), { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 12.5);
+  clock = 6000;
+  child.record(assistantUpdate(textDelta("c")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "abc");
+  assert.equal((await fleet.status(run.taskId)).tps, 12.5);
+  settleWith(child, "abc");
+  const result = await fleet.wait(run.taskId);
+  assert.equal(result.status, "completed");
+  assert.equal(Object.hasOwn(result, "tps"), false);
+});
+
+test("final-only usage reconciles after the response and untrusted counts never produce TPS", async (t) => {
+  let clock = 1000;
+  const { fleet, children } = await setup(t, { monotonic: () => clock });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate(textDelta("b")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "ab");
+  assert.equal((await fleet.status(run.taskId)).tps, undefined);
+  settleWith(child, "ab", { output: 25 });
+  const result = await fleet.wait(run.taskId);
+  assert.equal(result.status, "completed");
+  assert.equal(result.tps, 12.5);
+
+  let secondClock = 20000;
+  const second = await setup(t, { monotonic: () => secondClock });
+  const secondRun = await second.fleet.run(taskSpec());
+  await running(second.fleet, secondRun.taskId);
+  const secondChild = second.children[0];
+  secondChild.record(assistantStart());
+  secondChild.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await second.fleet.status(secondRun.taskId)).text === "a");
+  secondClock = 22000;
+  for (const output of [0, -3, 1.5, Number.MAX_SAFE_INTEGER + 1]) secondChild.record(assistantUpdate(textDelta("b"), { output }));
+  await eventually(async () => (await second.fleet.status(secondRun.taskId)).text === "abbbb");
+  assert.equal((await second.fleet.status(secondRun.taskId)).tps, undefined);
+  settleWith(secondChild, "abbbb", { output: 0 });
+  const secondResult = await second.fleet.wait(secondRun.taskId);
+  assert.equal(secondResult.status, "completed");
+  assert.equal(Object.hasOwn(secondResult, "tps"), false);
+});
+
+test("a new assistant response resets TPS instead of reusing the previous window", async (t) => {
+  let clock = 1000;
+  const { fleet, children } = await setup(t, { monotonic: () => clock });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate(textDelta("b"), { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 12.5);
+  child.record(assistantEnd("ab", { output: 40 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 20);
+  child.record(assistantStart());
+  clock = 10000;
+  child.record(assistantUpdate(textDelta("c")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "c");
+  assert.equal((await fleet.status(run.taskId)).tps, undefined);
+  clock = 13000;
+  child.record(assistantUpdate(textDelta("d"), { output: 30 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 10);
+  settleWith(child, "cd", { output: 45 });
+  const result = await fleet.wait(run.taskId);
+  assert.equal(result.status, "completed");
+  assert.equal(result.tps, 15);
+});
+
+test("bootstrap assistant output never establishes a task TPS", async (t) => {
+  let clock = 1000;
+  const { fleet } = await setup(t, { monotonic: () => clock, fakeOptions: { onBootstrap(command, child) {
+    child.record(assistantStart());
+    clock = 5000;
+    child.record(assistantUpdate(textDelta("bootstrap"), { output: 50 }));
+    child.record(assistantEnd("bootstrap", { output: 50 }));
+    child.respond(command, { disposition: "handled" });
+    child.notifyInventory();
+    return true;
+  } } });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  assert.equal((await fleet.status(run.taskId)).tps, undefined);
+});
+
+test("stop freezes the paired sample and a late final end reconciles only against frozen endpoints", async (t) => {
+  let clock = 1000;
+  const { fleet, children } = await setup(t, { monotonic: () => clock });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate(textDelta("b"), { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 12.5);
+  const task = fleet.tasks.get(run.taskId);
+  let releaseCancel;
+  const realCancel = task.transport.cancel.bind(task.transport);
+  task.transport.cancel = () => new Promise((resolve) => { releaseCancel = () => realCancel().then(resolve); });
+  const cancelling = fleet.cancel(run.taskId);
+  assert.equal(fleet.publicTask(task).tps, 12.5);
+  clock = 9000;
+  child.record(assistantUpdate(textDelta("late")));
+  child.record(assistantEnd("ab", { output: 40 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 20);
+  releaseCancel();
+  const result = await cancelling;
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.tps, 20);
+});
+
+test("a record admitted before stop cannot extend a frozen window after its journal append resolves", async (t) => {
+  let clock = 1000;
+  const { fleet, children } = await setup(t, { monotonic: () => clock });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate(textDelta("b"), { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 12.5);
+  const task = fleet.tasks.get(run.taskId);
+  const append = task.journal.append.bind(task.journal);
+  let release;
+  let blocked;
+  task.journal.append = (source, event) => {
+    if (source === "rpc" && event.type === "message_update") {
+      blocked = new Promise((resolve) => { release = resolve; });
+      return blocked.then(() => append(source, event));
+    }
+    return append(source, event);
+  };
+  clock = 9000;
+  child.record(assistantUpdate(textDelta("late"), { output: 40 }));
+  await eventually(() => blocked !== undefined);
+  const cancelling = fleet.cancel(run.taskId);
+  release();
+  const result = await cancelling;
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.tps, 12.5);
+});
+
+test("legacy terminal snapshots remain readable and nonterminal restores omit stale TPS", async (t) => {
+  let clock = 1000;
+  const { fleet, children, root } = await setup(t, { monotonic: () => clock, maxRetained: 0 });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate(textDelta("b"), { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 12.5);
+  const task = fleet.tasks.get(run.taskId);
+  await task.journal.snapshot(fleet.publicTask(task));
+  const stateFile = join(root, "tasks", run.taskId, "state.json");
+  assert.equal(JSON.parse(await readFile(stateFile, "utf8")).tps, 12.5);
+  const restarted = new FleetManager({ root, prepare() { throw new Error("No launch allowed"); } });
+  t.after(() => restarted.shutdown());
+  const orphan = await restarted.status(run.taskId);
+  assert.equal(orphan.status, "interrupted");
+  assert.equal(Object.hasOwn(orphan, "tps"), false);
+  settleWith(child, "ab", { output: 40 });
+  const completed = await fleet.wait(run.taskId);
+  assert.equal(completed.tps, 20);
+  const terminal = JSON.parse(await readFile(stateFile, "utf8"));
+  delete terminal.tps;
+  await writeFile(stateFile, JSON.stringify(terminal));
+  const legacy = await restarted.status(run.taskId);
+  assert.equal(legacy.status, "completed");
+  assert.equal(Object.hasOwn(legacy, "tps"), false);
+});
+
+test("overflowing TPS arithmetic yields an omitted value instead of Infinity", async (t) => {
+  let clock = 1000;
+  const { fleet, children } = await setup(t, { monotonic: () => clock });
+  const run = await fleet.run(taskSpec());
+  await running(fleet, run.taskId);
+  const child = children[0];
+  child.record(assistantStart());
+  child.record(assistantUpdate(textDelta("a")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "a");
+  clock = 3000;
+  child.record(assistantUpdate(textDelta("b"), { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).tps === 12.5);
+  child.record(assistantEnd("ab", { output: 25 }));
+  child.record(assistantStart());
+  clock = 0;
+  child.record(assistantUpdate(textDelta("c")));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "c");
+  clock = 1e-310;
+  child.record(assistantUpdate(textDelta("d"), { output: 25 }));
+  await eventually(async () => (await fleet.status(run.taskId)).text === "cd");
+  assert.equal(Object.hasOwn(await fleet.status(run.taskId), "tps"), false);
 });

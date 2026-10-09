@@ -38,6 +38,7 @@ test("adapter factory registers unique codemode tools with directly accessible s
   assert.equal(run.exposure, "codemode");
   assert.equal(run.outputSchema.properties.taskId.type, "string");
   assert.equal(run.outputSchema.properties.text.type, "string");
+  assert.equal(run.outputSchema.properties.tps.type, "number");
   assert.deepEqual(Array.from(run.outputSchema.properties.thinking.anyOf, (value) => value.const), ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
   assert.equal(run.outputSchema.properties.timeoutMs.type, "integer");
   assert.equal(run.outputSchema.properties.status.anyOf.some((value) => value.const === "completed"), true);
@@ -104,6 +105,8 @@ test("task output schema accepts new metadata and legacy results without it", {
     status: "completed", state: { status: "completed" }, text: "done", truncated: false, createdAt: 0,
     currentTools: [], eventFile: "/events.jsonl", ownerId: "owner-1", ownerPid: 1 };
   assert.equal(Check(outputSchema, legacy), true);
+  assert.equal(Check(outputSchema, { ...legacy, tps: 12.5 }), true);
+  assert.equal(Check(outputSchema, { ...legacy, tps: "12.5" }), false);
   for (const thinking of ["high", "off"]) assert.equal(Check(outputSchema, { ...legacy, thinking, timeoutMs: 150 }), true);
   assert.equal(Check(outputSchema, { ...legacy, thinking: "unknown" }), false);
 });

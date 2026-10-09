@@ -157,7 +157,7 @@ test("output preview starts folded, preserves summary rows, toggles immediately,
     const expanded = widget.render(200);
     assert.ok(expanded[0].includes("\uf078 展開"));
     assert.deepEqual(Array.from(expanded.slice(1, 3)), Array.from(folded.slice(1, 3)));
-    assert.ok(expanded.join("\n").includes("task-id- 輸出"));
+    assert.ok(expanded.join("\n").includes("task-id- \uf0e7 — tok/s 輸出"));
     assert.ok(expanded.includes("private-live-output"));
     current = { ...current, text: "updated-stream-tail" };
     for (const listener of harness.listeners) listener();
@@ -199,7 +199,8 @@ test("expanded preview shows newest wrapped tail at real TUI widths after saniti
     current = { ...current, text: "old\u2028new\u2029tabs\there\n\u001b]0;" + "OSC-SECRET".repeat(1000) + "\u0007latest\u001b[31m-visible\u001b[0m" };
     const lines = widget.render(80);
     assert.deepEqual(Array.from(lines.slice(3)), ["old", "new", "tabs here", "latest-visible"]);
-    assert.equal(/[\u001b\u0007\t]/.test(lines.join("")), false);
+    assert.equal(/[\u0007\t]/.test(lines.join("")), false);
+    assert.equal(/\u001b(?!\[0m)/.test(lines.join("")), false);
     current = { ...current, text: "safe\n\u001b]0;" + "UNTERMINATED-SECRET".repeat(500) };
     assert.equal(widget.render(80).join("\n").includes("UNTERMINATED-SECRET"), false);
   } finally { widget.dispose(); }
@@ -240,7 +241,7 @@ test("only expanded output retains the latest finished result and active tasks t
     ];
     for (const listener of harness.listeners) listener();
     const completed = widget.render(120).join("\n");
-    assert.ok(completed.includes("new-done 輸出 \uf00c"));
+    assert.ok(completed.includes("new-done \uf0e7 — tok/s 輸出 \uf00c"));
     assert.ok(completed.includes("latest-finished"));
     assert.equal(completed.includes("older-finished"), false);
     controller.toggle();
@@ -388,7 +389,7 @@ for (const [name, fields, thinking, timeout] of [
     code.installFleetWidget({ mode: "tui", ui: { getToolsExpanded, setWidget: (_name, factory) => { widget = factory(tui, theme); } } }, model);
     try {
       const widgetRow = widget.render(200)[1];
-      assert.ok(widgetRow.startsWith(`96cde265 scout opencode-go/deepseek-v4.1-flash ${thinking} \uf04b `));
+      assert.ok(widgetRow.startsWith(`96cde265 \uf0e7 — tok/s scout opencode-go/deepseek-v4.1-flash ${thinking} \uf04b `));
       assert.match(widgetRow, new RegExp(`\uf04b \\d+s${timeout.replace(".", "\\.")} $`));
       assert.equal(widgetRow.includes("執行中"), false);
       assert.equal(widgetRow.includes("timeout="), false);
@@ -399,7 +400,7 @@ for (const [name, fields, thinking, timeout] of [
       const component = factory(tui, theme, {}, resolve);
       try {
         const listRow = component.render(200)[1];
-        assert.match(listRow, new RegExp(`^> 96cde265 scout \uf04b \\d+s${timeout.replace(".", "\\.")} deepseek-v4\\.1-flash ${thinking}$`));
+        assert.match(listRow, new RegExp(`^> 96cde265 \uf0e7 — tok/s scout \uf04b \\d+s${timeout.replace(".", "\\.")} deepseek-v4\\.1-flash ${thinking}$`));
         assert.equal(listRow.includes("執行中"), false);
         assert.equal(listRow.includes("timeout="), false);
         if (!timeout) assert.equal(listRow.includes("\uf252"), false);
@@ -487,6 +488,60 @@ test("ask-only waiting state replies through the coordination path with escaped 
   }
   assert.equal(listeners.size, 0);
   assert.equal(timers.size, 0);
+});
+
+test("TPS appears near the task ID in widget, list, and detail with exact known and placeholder strings", options, async () => {
+  const harness = setup();
+  const known = { ...task, taskId: "tps-known-123456", name: "a very long task name that keeps going and going".repeat(4), model: { provider: "provider-name-that-is-very-long", id: "model-name-that-is-also-very-long" }, tps: 12.5 };
+  const unknown = { ...task, taskId: "tps-unknown-9", name: "missing usage", tps: undefined };
+  harness.model.tasks = () => [unknown, known];
+  harness.model.schedules = () => [];
+  const ctx = { mode: "tui", ui: { notify() {}, custom: (factory) => new Promise((resolve) => {
+    const component = factory(harness.tui, theme, {}, resolve);
+    try {
+      const list = component.render(200).join("\n");
+      assert.ok(list.includes("tps-know \uf0e7 12.5 tok/s a very long task name"));
+      assert.ok(list.includes("tps-unkn \uf0e7 — tok/s"));
+      assert.ok(list.indexOf("\uf0e7") < list.indexOf("a very long task name"));
+      for (const width of [80, 120]) harness.widths(component.render(width), width);
+      component.handleInput("\r");
+      const detail = component.render(200).join("\n");
+      assert.ok(detail.includes("\uf0e7 12.5 tok/s 最新回應觀測視窗"));
+      assert.ok(detail.indexOf("\uf0e7") < detail.indexOf("模型 provider-name"));
+      assert.ok(detail.indexOf("\uf0e7") < detail.indexOf("a very long task name"));
+      for (const width of [80, 120]) harness.widths(component.render(width), width);
+      component.handleInput("\x1b");
+      component.handleInput("\x1b");
+    } finally { component.dispose(); }
+  }) } };
+  await harness.code.showFleetScreen(ctx, harness.model, {});
+  assert.equal(harness.listeners.size, 0);
+  assert.equal(harness.timers.size, 0);
+  harness.model.tasks = () => [known];
+  const { widget } = mountWidget(harness);
+  try {
+    const widgetRow = widget.render(200).find((line) => line.includes("tps-know"));
+    assert.ok(widgetRow.includes("tps-know \uf0e7 12.5 tok/s"));
+    assert.ok(widgetRow.indexOf("\uf0e7") < widgetRow.indexOf("a very long task name"));
+    for (const width of [80, 120]) harness.widths(widget.render(width), width);
+  } finally { widget.dispose(); }
+  assert.equal(harness.listeners.size, 0);
+  assert.equal(harness.timers.size, 0);
+});
+
+test("nonfinite and negative TPS values render the placeholder", options, () => {
+  const harness = setup();
+  harness.model.tasks = () => [
+    { ...task, taskId: "tps-negative", name: "negative", tps: -4.2 },
+    { ...task, taskId: "tps-nonfinite", name: "nonfinite", tps: Number.NaN },
+  ];
+  harness.model.schedules = () => [];
+  const { widget } = mountWidget(harness);
+  try {
+    const rendered = widget.render(200).join("\n");
+    assert.ok(rendered.includes("tps-nega \uf0e7 — tok/s"));
+    assert.ok(rendered.includes("tps-nonf \uf0e7 — tok/s"));
+  } finally { widget.dispose(); }
 });
 
 test("screen rows sanitize newlines, detail wraps Unicode, keys choose actions, and every exit disposes", options, async () => {

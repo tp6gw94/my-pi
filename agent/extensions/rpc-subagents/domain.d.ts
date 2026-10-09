@@ -54,6 +54,7 @@ export type TaskResult = {
   state: TaskState;
   text: string;
   truncated: boolean;
+  tps?: number;
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;

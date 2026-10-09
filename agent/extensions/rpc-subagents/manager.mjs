@@ -7,9 +7,16 @@ import { SessionRegistry } from "./sessions.mjs";
 import { BOOTSTRAP_PROMPT, COORDINATION_LIMITS, normalizeCoordinationText, normalizeParentAnswer, normalizePendingOptions,
   parseCoordinationRecord, verifyCapabilities } from "./coordination.mjs";
 
+const trustedOutputCount = (value) => Number.isSafeInteger(value) && value > 0;
+const observedTps = (count, firstMs, lastMs) => {
+  if (!trustedOutputCount(count) || firstMs === undefined || lastMs === undefined || lastMs <= firstMs) return undefined;
+  const tps = count / ((lastMs - firstMs) / 1000);
+  return Number.isFinite(tps) && tps > 0 ? tps : undefined;
+};
+
 export class FleetManager {
   constructor({ root, prepare, concurrency = 4, maxQueued = 100, maxRetained = 200, journalOptions = {}, transportFactory = undefined, now = Date.now,
-    dialogTimeoutMs = 120000, bootstrapTimeoutMs = 30000, setTimer = setTimeout, clearTimer = clearTimeout }) {
+    dialogTimeoutMs = 120000, bootstrapTimeoutMs = 30000, setTimer = setTimeout, clearTimer = clearTimeout, monotonic = () => performance.now() }) {
     this.root = root;
     this.ownerId = randomUUID();
     this.sessions = new SessionRegistry({ root, ownerId: this.ownerId });
@@ -20,6 +27,7 @@ export class FleetManager {
     this.journalOptions = journalOptions;
     this.transportFactory = transportFactory ?? ((options) => new RpcTransport(options));
     this.now = now;
+    this.monotonic = monotonic;
     this.dialogTimeoutMs = dialogTimeoutMs;
     this.bootstrapTimeoutMs = boundedInteger(bootstrapTimeoutMs, "bootstrapTimeoutMs", 1, 600000);
     this.setTimer = setTimer;
@@ -104,7 +112,53 @@ export class FleetManager {
     if (task.droppedThrough) result.droppedReportsThrough = task.droppedThrough;
     if (task.state.status === "failed") result.error = task.state.error;
     if (task.persistenceError) result.persistenceError = task.persistenceError;
+    const tps = this.metricTps(task);
+    if (tps !== undefined) result.tps = tps;
     return result;
+  }
+
+  beginMetric(task) {
+    if (task.finishing || task.stopPromise || task.metric?.kind === "frozen") return;
+    task.metric = { kind: "open", firstMs: undefined, lastMs: undefined, count: undefined, sampledMs: undefined };
+  }
+
+  observeMetric(task, at, isDelta, usage) {
+    const metric = task.metric;
+    if (metric?.kind !== "open") return;
+    if (isDelta) {
+      if (metric.firstMs === undefined) metric.firstMs = at;
+      metric.lastMs = at;
+    }
+    if (trustedOutputCount(usage?.output)) {
+      metric.count = usage.output;
+      if (metric.lastMs !== undefined) metric.sampledMs = metric.lastMs;
+    }
+  }
+
+  closeMetric(task, count, untilMs) {
+    const metric = task.metric;
+    if (metric?.kind !== "open" && metric?.kind !== "frozen") return;
+    metric.kind = "closed";
+    metric.tps = observedTps(count, metric.firstMs, untilMs);
+  }
+
+  endMetric(task, usage) {
+    this.closeMetric(task, usage?.output, task.metric?.lastMs);
+  }
+
+  freezeMetric(task) {
+    if (task.metric?.kind === "open") task.metric.kind = "frozen";
+  }
+
+  sealMetric(task) {
+    this.closeMetric(task, task.metric?.count, task.metric?.sampledMs);
+  }
+
+  metricTps(task) {
+    const metric = task.metric;
+    if (!metric) return undefined;
+    if (metric.kind === "closed") return metric.tps;
+    return observedTps(metric.count, metric.firstMs, metric.sampledMs);
   }
 
   publicRequests(task) {
@@ -131,7 +185,8 @@ export class FleetManager {
     const saved = await readJSON(join(this.root, "tasks", taskId, "state.json"));
     if (!terminalTaskStates.has(saved.status)) {
       if (saved.ownerPid !== undefined && saved.ownerPid !== process.pid && isProcessAlive(saved.ownerPid)) throw new Error("Task belongs to another live Pi owner. Wait or cancel through that owner; live tasks are not adopted.");
-      return { ...saved, status: "interrupted", state: { status: "interrupted", reason: "Previous owner exited; live tasks are not recovered" }, currentTools: [] };
+      const { tps, ...rest } = saved;
+      return { ...rest, status: "interrupted", state: { status: "interrupted", reason: "Previous owner exited; live tasks are not recovered" }, currentTools: [] };
     }
     return saved;
   }
@@ -287,18 +342,28 @@ export class FleetManager {
 
   async record(task, record) {
     if (task.finishing) return;
+    const at = this.monotonic();
     await task.journal.append("rpc", record);
+    if (task.finishing) return;
     if (record.type === "message_end" && record.message?.role === "assistant") {
+      if (task.phase === "user") this.endMetric(task, record.message.usage);
       task.assistant = { stopReason: record.message.stopReason, errorMessage: record.message.errorMessage };
       Object.assign(task, boundedText(textContent(record.message.content)));
       task.truncated ||= task.assistant.stopReason === "length";
       if (!["error", "aborted"].includes(task.assistant.stopReason)) task.retryError = undefined;
       await task.journal.snapshot(this.publicTask(task));
-    } else if (record.type === "message_update" && record.assistantMessageEvent?.type === "text_delta") {
-      const next = boundedText(task.text + record.assistantMessageEvent.delta);
-      task.text = next.text;
-      task.truncated ||= next.truncated;
+    } else if (record.type === "message_update") {
+      const event = record.assistantMessageEvent;
+      const isDelta = (event?.type === "text_delta" || event?.type === "thinking_delta" || event?.type === "toolcall_delta")
+        && typeof event?.delta === "string" && event.delta.length > 0;
+      if (task.phase === "user") this.observeMetric(task, at, isDelta, record.usage);
+      if (event?.type === "text_delta") {
+        const next = boundedText(task.text + event.delta);
+        task.text = next.text;
+        task.truncated ||= next.truncated;
+      }
     } else if (record.type === "message_start" && record.message?.role === "assistant") {
+      if (task.phase === "user") this.beginMetric(task);
       task.text = "";
       task.truncated = false;
     } else if (record.type === "tool_execution_start") {
@@ -566,6 +631,7 @@ export class FleetManager {
   stopTask(task, outcome, reason) {
     if (task.stopPromise) return task.stopPromise;
     if (task.finishing || terminalTaskStates.has(task.state.status)) return task.done.promise;
+    this.freezeMetric(task);
     task.abort.abort(reason);
     const transition = this.transition(task, { status: "cancelling", outcome, reason });
     transition.catch(() => {});
@@ -593,6 +659,7 @@ export class FleetManager {
 
   finish(task, state) {
     if (task.finishPromise) return task.finishPromise;
+    this.sealMetric(task);
     task.finishing = true;
     task.finishPromise = (async () => {
       this.clearTimer(task.timeout);

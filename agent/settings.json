@@ -9,7 +9,8 @@
   "packages": [
     "npm:pi-web-access",
     "extensions/deepinfra-provider",
-    "npm:pi-btw"
+    "npm:pi-btw",
+    "https://github.com/gsanhueza/pi-token-speed"
   ],
   "theme": "github-light",
   "modelThinkingLevels": {
