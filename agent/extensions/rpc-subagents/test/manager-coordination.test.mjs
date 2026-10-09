@@ -10,6 +10,7 @@ import { writeChildSession } from "../snapshot.mjs";
 import { BOOTSTRAP_PROMPT } from "../coordination.mjs";
 import { FakeRpcProcess, eventually, tick } from "./fake-rpc.mjs";
 
+process.env.PI_CODING_AGENT_DIR = join(tmpdir(), "rpc-subagents-manager-missing-config");
 const taskCwd = process.cwd();
 const taskSpec = (extra = {}) => {
   const base = { webAccess: false, prompt: "Test task", name: "test", cwd: taskCwd, model: { provider: "test", id: "model" }, thinking: "off", async: true, timeoutMs: 10000 };
@@ -474,34 +475,35 @@ test("pending limit bounds pending requests as well as reports", async (t) => {
 });
 
 test("controlled web activation refreshes the public and persisted capability snapshot", async (t) => {
-  const registered = ["read", "fetch_page", "web_enable", "rpc_subagents_parent"];
+  const registered = ["read", "fetch_content", "web_enable", "rpc_subagents_parent"];
   const active = ["read", "web_enable", "rpc_subagents_parent"];
   const inventory = { registered, active, declared: active, callable: ["read", "web_enable"],
-    exposures: { read: "direct", fetch_page: "direct", web_enable: "direct", rpc_subagents_parent: "model-only" },
-    webTools: ["fetch_page", "web_enable"] };
-  const { fleet, children } = await setup(t, { fakeOptions: { inventory } });
-  const accepted = await fleet.run(taskSpec({ tools: ["read"], webAccess: true }));
+    exposures: { read: "direct", fetch_content: "direct", web_enable: "direct", rpc_subagents_parent: "model-only" },
+    webTools: ["fetch_content", "web_enable"] };
+  const { fleet, children } = await setup(t, { prepare: async (spec, context, base) => ({ ...(await base(spec, context)), webTools: ["fetch_content", "web_enable"] }), fakeOptions: { inventory } });
+  const accepted = await fleet.run(taskSpec({ tools: ["read"], webTools: ["fetch_content"], webAccess: true }));
   await running(fleet, accepted.taskId);
-  assert.equal((await fleet.status(accepted.taskId)).capabilities.reachable.includes("fetch_page"), false);
-  const enabled = { ...inventory, active: registered, declared: registered, callable: ["read", "fetch_page", "web_enable"] };
+  assert.equal((await fleet.status(accepted.taskId)).capabilities.reachable.includes("fetch_content"), false);
+  const enabled = { ...inventory, active: registered, declared: registered, callable: ["read", "fetch_content", "web_enable"] };
   children[0].notifyInventory(enabled);
-  await eventually(async () => (await fleet.status(accepted.taskId)).capabilities.reachable.includes("fetch_page"), "enabled public capability");
+  await eventually(async () => (await fleet.status(accepted.taskId)).capabilities.reachable.includes("fetch_content"), "enabled public capability");
   children[0].settle("Enabled web access");
   const result = await fleet.wait(accepted.taskId);
   assert.equal(result.status, "completed");
   assert.equal(result.webAccess, true);
-  assert.ok(result.capabilities.reachable.includes("fetch_page"));
-  assert.deepEqual((await fleet.result(accepted.taskId)).capabilities.webTools, ["fetch_page", "web_enable"]);
+  assert.deepEqual(result.webTools, ["fetch_content"]);
+  assert.ok(result.capabilities.reachable.includes("fetch_content"));
+  assert.deepEqual((await fleet.result(accepted.taskId)).capabilities.webTools, ["fetch_content", "web_enable"]);
 });
 
 test("web refresh rejects a substituted family or an unrelated reachable tool", async (t) => {
-  const inventory = { registered: ["read", "fetch_page", "rpc_subagents_parent"],
-    active: ["read", "fetch_page", "rpc_subagents_parent"], declared: ["read", "fetch_page", "rpc_subagents_parent"],
-    callable: ["read", "fetch_page"], exposures: { read: "direct", fetch_page: "direct", rpc_subagents_parent: "model-only" },
-    webTools: ["fetch_page"] };
+  const inventory = { registered: ["read", "fetch_content", "rpc_subagents_parent"],
+    active: ["read", "fetch_content", "rpc_subagents_parent"], declared: ["read", "fetch_content", "rpc_subagents_parent"],
+    callable: ["read", "fetch_content"], exposures: { read: "direct", fetch_content: "direct", rpc_subagents_parent: "model-only" },
+    webTools: ["fetch_content"] };
   for (const familyChanged of [false, true]) {
-    const { fleet, children } = await setup(t, { fakeOptions: { inventory } });
-    const accepted = await fleet.run(taskSpec({ tools: ["read"], webAccess: true }));
+    const { fleet, children } = await setup(t, { prepare: async (spec, context, base) => ({ ...(await base(spec, context)), webTools: ["fetch_content"] }), fakeOptions: { inventory } });
+    const accepted = await fleet.run(taskSpec({ tools: ["read"], webTools: ["fetch_content"], webAccess: true }));
     await running(fleet, accepted.taskId);
     const updated = { ...inventory, registered: [...inventory.registered, "unrelated"],
       active: [...inventory.active, "unrelated"], declared: [...inventory.declared, "unrelated"],

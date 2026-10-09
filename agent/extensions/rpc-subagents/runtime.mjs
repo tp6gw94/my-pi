@@ -4,7 +4,8 @@ import { join, resolve, dirname, relative, isAbsolute } from "node:path";
 import { readJSON } from "./store.mjs";
 import { writeChildSession } from "./snapshot.mjs";
 import { boundedInteger, normalizeTools } from "./domain.mjs";
-import { configuredWebTools, WEB_APPROVED_ENV } from "./web-policy.mjs";
+import { readWebCatalog, WEB_APPROVED_ENV } from "./web-policy.mjs";
+import { resolveWebLaunch } from "./capability.mjs";
 import { PARENT_TOOL_NAME } from "./coordination.mjs";
 
 export function resolveCliEntrypoint(packageDir, argvEntry = process.argv[1]) {
@@ -129,12 +130,15 @@ export function createTaskPreparer({ extensionDir, agentDir, cliPath, config }) 
     if (spec.session === undefined) {
       await writeChildSession(sessionFile, { cwd: spec.cwd, template: spec.context === "fork" ? template : undefined });
     }
-    const webSource = spec.webAccess ? resolveWebEntrypoint(agentDir) : undefined;
-    const webTools = webSource ? configuredWebTools(tools) : [];
+    if (!Array.isArray(spec.webTools)) throw new Error("Task specification is missing resolved web tools");
+    const launch = spec.webTools.length === 0
+      ? undefined
+      : resolveWebLaunch({ tools, webTools: spec.webTools, webToolSlots: spec.webToolSlots }, readWebCatalog());
+    const webSource = launch ? resolveWebEntrypoint(agentDir) : undefined;
     const args = ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
       "--provider", spec.model.provider, "--model", spec.model.id, "--thinking", spec.thinking,
       "--session", sessionFile, "--session-dir", dirname(sessionFile), "--name", spec.name,
-      "--tools", [...tools, PARENT_TOOL_NAME, ...webTools].join(",")];
+      "--tools", [...tools, PARENT_TOOL_NAME, ...(launch ? launch.approved : [])].join(",")];
     if (tools.includes("codemode")) args.push("--extension", "builtin:codemode");
     if (webSource) args.push("--extension", join(extensionDir, "web.ts"));
     args.push("--extension", bridgeExtension);
@@ -144,7 +148,11 @@ export function createTaskPreparer({ extensionDir, agentDir, cliPath, config }) 
     for (const key of Object.keys(env)) if (key.startsWith("RPC_SUBAGENTS_")) delete env[key];
     if (webSource) {
       env[WEB_SOURCE_ENV] = webSource;
-      env[WEB_APPROVED_ENV] = JSON.stringify(webTools);
+      env[WEB_APPROVED_ENV] = JSON.stringify({
+        functional: launch.functional,
+        family: launch.family,
+        loader: launch.loader,
+      });
     }
     if (binding) {
       env[CHILD_BINDING_ENV.taskId] = binding.taskId;
@@ -152,6 +160,6 @@ export function createTaskPreparer({ extensionDir, agentDir, cliPath, config }) 
       env[CHILD_BINDING_ENV.nonce] = binding.nonce;
       env[CHILD_BINDING_ENV.async] = spec.async ? "1" : "0";
     }
-    return { cliPath, cwd: spec.cwd, sessionFile, args, env, binding, webTools, commandTimeoutMs: config.commandTimeoutMs };
+    return { cliPath, cwd: spec.cwd, sessionFile, args, env, binding, webTools: launch ? launch.approved : [], commandTimeoutMs: config.commandTimeoutMs };
   };
 }

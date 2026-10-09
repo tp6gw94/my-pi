@@ -132,6 +132,9 @@ test("task preparation builds exact argv for default, custom, and empty tool set
 });
 
 test("task preparation binds launch identity into an inherited child environment", async (t) => {
+  const previous = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("RPC_SUBAGENTS_")));
+  for (const key of Object.keys(previous)) delete process.env[key];
+  t.after(() => Object.assign(process.env, previous));
   const f = await prepareFixture(t);
   process.env.RPC_SUBAGENTS_TEST_MARKER = "inherited";
   t.after(() => { delete process.env.RPC_SUBAGENTS_TEST_MARKER; });

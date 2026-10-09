@@ -1,11 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { normalizeTaskSpec, normalizeTools, normalizeSessionReference, assertTransition, boundedText, textContent } from "../domain.mjs";
+import { parseToolExpression, resolveTaskCapabilities } from "../capability.mjs";
+import { readWebCatalog } from "../web-policy.mjs";
 import {
   normalizeCoordinationText, normalizeParentCall, normalizeParentAnswer, normalizePendingOptions,
   createCoordinationRequestId, encodeCoordinationEnvelope, decodeCoordinationEnvelope,
   parseCoordinationRecord, validateToolInventory, verifyCapabilities,
 } from "../coordination.mjs";
+
+process.env.PI_CODING_AGENT_DIR = join(tmpdir(), "rpc-subagents-domain-missing-config");
+const defaultFamily = ["web_search", "source_check", "fetch_content", "get_search_content"];
+const defaultSlots = { web_search: "webSearch", source_check: "sourceCheck", fetch_content: "fetchContent", get_search_content: "getSearchContent" };
 
 const defaults = { cwd: "/project", model: { provider: "test", id: "model" } };
 const launch = { taskId: "task-1", ownerId: "owner-1", nonce: "launch-1" };
@@ -21,14 +29,83 @@ const ask = { kind: "ask", requestId: "ask-request-1", question: "May I continue
 test("legacy and persisted task specs gain the exact execution defaults without changing fresh/fork behavior", () => {
   assert.deepEqual(normalizeTaskSpec({ prompt: "Inspect" }, defaults), {
     prompt: "Inspect", name: "RPC task", cwd: "/project", model: { provider: "test", id: "model" },
-    webAccess: true, thinking: "off", context: "fresh", tools: ["read", "write", "edit", "bash", "codemode"], async: false, timeoutMs: 1800000,
+    webAccess: true, webTools: defaultFamily, webToolSlots: defaultSlots, thinking: "off", context: "fresh", tools: ["read", "write", "edit", "bash", "codemode"], async: false, timeoutMs: 1800000,
   });
   const persisted = { prompt: "Inspect", name: "Saved", cwd: "/project", model: { provider: "test", id: "model" },
     thinking: "high", context: "fork", async: true, timeoutMs: 1000 };
   const normalized = normalizeTaskSpec(persisted);
-  assert.deepEqual(normalized, { ...persisted, webAccess: true, tools: ["read", "write", "edit", "bash", "codemode"] });
-  assert.deepEqual(normalizeTaskSpec(normalized), { ...persisted, webAccess: true, tools: ["read", "write", "edit", "bash", "codemode"] });
+  assert.deepEqual(normalized, { ...persisted, webAccess: true, webTools: defaultFamily, webToolSlots: defaultSlots, tools: ["read", "write", "edit", "bash", "codemode"] });
+  assert.deepEqual(normalizeTaskSpec(normalized), { ...persisted, webAccess: true, webTools: defaultFamily, webToolSlots: defaultSlots, tools: ["read", "write", "edit", "bash", "codemode"] });
   assert.equal(Object.hasOwn(persisted, "tools"), false);
+});
+
+test("signed adjustments fold onto the fixed execution defaults in order and partition web selections", () => {
+  const inspect = (tools, extra = {}) => normalizeTaskSpec({ prompt: "Inspect", tools, ...extra }, defaults);
+  assert.deepEqual(inspect(["+bash", "-codemode", "+web_search"]).tools, ["read", "write", "edit", "bash"]);
+  assert.deepEqual(inspect(["+bash", "-codemode", "+web_search"]).webTools, ["web_search"]);
+  assert.deepEqual(inspect(["-read", "+read", "+read", "-absent"]).tools, ["write", "edit", "bash", "codemode", "read"]);
+  assert.deepEqual(inspect(["+fetch_content", "-fetch_content"]).webTools, []);
+  assert.equal(inspect(["+fetch_content", "-fetch_content"]).webAccess, false);
+  assert.deepEqual(inspect(["+fetch_content"]).webTools, ["fetch_content"]);
+  assert.deepEqual(inspect(["+fetch_content"]).tools, ["read", "write", "edit", "bash", "codemode"]);
+  assert.deepEqual(inspect(["read", "fetch_content"]).tools, ["read"]);
+  assert.deepEqual(inspect(["read", "fetch_content"]).webTools, ["fetch_content"]);
+  assert.equal(inspect(["read"]).webAccess, false);
+  assert.deepEqual(inspect(["read"], { webAccess: false }).webTools, []);
+  assert.deepEqual(inspect(["read"], { webAccess: true }).webTools, defaultFamily);
+  assert.deepEqual(inspect(undefined, { webAccess: false }).webTools, []);
+  assert.deepEqual(inspect([], { webAccess: true }).webTools, defaultFamily);
+  assert.deepEqual(inspect([], { webAccess: true }).tools, []);
+  assert.deepEqual(inspect(["+web_search", "+source_check", "+fetch_content", "+get_search_content"], { webAccess: true }).webTools, defaultFamily);
+  assert.throws(() => inspect(["+web_search", "+fetch_content"], { webAccess: true }), /contradicts/);
+});
+
+test("selection syntax rejects mixed, empty, wildcard, reserved, duplicate and contradictory inputs", () => {
+  const inspect = (tools, extra = {}) => normalizeTaskSpec({ prompt: "Inspect", tools, ...extra }, defaults);
+  for (const tools of [["+read", "bash"], ["+read", "-"], ["+"], ["*"], ["read*"], ["+*"], ["read", "read"], ["rpc_subagents_parent"], ["+rpc_subagents_reply"], ["web_enable"], ["+web_enable"]]) {
+    assert.throws(() => inspect(tools), /tools|web_enable|duplicate|reserved|literal|wildcard/i, JSON.stringify(tools));
+  }
+  assert.throws(() => inspect(["read"], { webAccess: "yes" }), /webAccess must be boolean/);
+  assert.throws(() => inspect(["read", "fetch_content"], { webAccess: false }), /contradicts/);
+  assert.throws(() => inspect(["read", "fetch_content"], { webAccess: true }), /contradicts/);
+  assert.throws(() => inspect(["fetch_content"], { webAccess: true }), /contradicts/);
+  assert.deepEqual(inspect(["read", "web_search", "source_check", "fetch_content", "get_search_content"], { webAccess: true }).webTools, defaultFamily);
+  const canonical = { prompt: "Inspect", tools: ["read"], webTools: ["web_search"], webAccess: true, cwd: "/project", model: { provider: "test", id: "model" } };
+  assert.deepEqual(normalizeTaskSpec(canonical), { ...canonical, webToolSlots: { web_search: "webSearch" }, thinking: "off", name: "RPC task", context: "fresh", async: false, timeoutMs: 1800000 });
+  assert.throws(() => normalizeTaskSpec({ ...canonical, webAccess: false }), /contradicts/);
+  assert.throws(() => normalizeTaskSpec({ ...canonical, tools: undefined }), /explicit tools/);
+  assert.throws(() => normalizeTaskSpec({ ...canonical, webTools: ["web_enable"], webAccess: true, tools: [] }), /machinery/);
+});
+
+test("catalogue renames select the current name and fail closed on renamed-away or disabled names", () => {
+  const catalog = readWebCatalog({ PI_CODING_AGENT_DIR: join(tmpdir(), "rpc-subagents-domain-missing-config") }, tmpdir());
+  const renamed = { ...catalog, slots: catalog.slots.map((slot) => slot.key === "fetchContent" ? { ...slot, name: "get_page" } : slot),
+    enabled: catalog.enabled.map((name) => name === "fetch_content" ? "get_page" : name),
+    reserved: new Set([...catalog.reserved, "get_page"]) };
+  assert.deepEqual(resolveTaskCapabilities({ tools: ["+get_page"] }, () => renamed).webTools, ["get_page"]);
+  assert.throws(() => resolveTaskCapabilities({ tools: ["+fetch_content"] }, () => renamed), /disabled or renamed/);
+  assert.deepEqual(resolveTaskCapabilities({ tools: ["+read", "-fetch_content"] }, () => renamed).webTools, []);
+  const disabled = { ...catalog, enabled: catalog.enabled.filter((name) => name !== "source_check") };
+  assert.throws(() => resolveTaskCapabilities({ tools: ["+source_check"] }, () => disabled), /disabled or renamed/);
+  assert.throws(() => resolveTaskCapabilities({ tools: ["+source_check"] }, () => ({ ...catalog, enabled: [] })), /disabled or renamed/);
+  assert.throws(() => resolveTaskCapabilities({ tools: undefined, webAccess: true }, () => ({ ...catalog, enabled: [] })), /all installed web tools are disabled/);
+  const never = () => { throw new Error("web configuration must not be read"); };
+  for (const input of [{ tools: [] }, { tools: [], webAccess: false }, { tools: ["read"] }, { tools: ["+bash", "-edit", "-codemode"] }]) {
+    const resolved = resolveTaskCapabilities(input, never);
+    assert.deepEqual(resolved.webTools, []);
+    assert.equal(resolved.webAccess, false);
+  }
+  assert.throws(() => resolveTaskCapabilities({ tools: ["+get_page"] }, never), /must not be read/);
+  const bound = resolveTaskCapabilities({ tools: ["+get_page"] }, () => renamed);
+  assert.deepEqual(bound.webToolSlots, { get_page: "fetchContent" });
+  assert.deepEqual(resolveTaskCapabilities({ tools: ["read"], webTools: ["get_page"], webToolSlots: bound.webToolSlots }, () => renamed).webToolSlots, { get_page: "fetchContent" });
+  const reassigned = { ...renamed, slots: renamed.slots.map((slot) => slot.name === "get_page" ? { ...slot, key: "webSearch" } : slot) };
+  assert.throws(() => resolveTaskCapabilities({ tools: ["read"], webTools: ["get_page"], webToolSlots: bound.webToolSlots }, () => reassigned), /rename or reassignment/);
+  assert.throws(() => resolveTaskCapabilities({ tools: ["read"], webTools: ["get_page"], webToolSlots: { get_page: "fetchContent", extra: "webSearch" } }, () => renamed), /exactly match/);
+  const expression = parseToolExpression(["+read", "-bash"]);
+  assert.deepEqual(expression.ops.map((op) => [op.op, op.name]), [["add", "read"], ["remove", "bash"]]);
+  assert.equal(parseToolExpression(undefined).form, "omitted");
+  assert.deepEqual(parseToolExpression([]), { form: "replace", names: [] });
 });
 
 test("custom execution tools replace defaults, preserve ordering and empty arrays, and are copied", () => {
@@ -61,7 +138,7 @@ test("resume preserves an exact identity or path and stays idempotent without sy
   const result = normalizeTaskSpec({ prompt: "Continue", session: "session-1", tools: [], async: true }, defaults);
   assert.deepEqual(result, {
     prompt: "Continue", name: "RPC task", cwd: "/project", model: { provider: "test", id: "model" },
-    webAccess: false, thinking: "off", session: "session-1", tools: [], async: true, timeoutMs: 1800000,
+    webAccess: false, webTools: [], thinking: "off", session: "session-1", tools: [], async: true, timeoutMs: 1800000,
   });
   assert.deepEqual(normalizeTaskSpec(result), result);
   assert.equal(Object.hasOwn(result, "context"), false);
@@ -88,7 +165,7 @@ test("session references are bounded positive literal identities or absolute jso
 test("existing normalized task fields, domain helpers and input errors remain observable", () => {
   assert.deepEqual(normalizeTaskSpec({ prompt: "Inspect", cwd: "child", thinking: "max", context: "fork", timeoutMs: 100, tools: ["read"] }, defaults), {
     prompt: "Inspect", name: "RPC task", cwd: "/project/child", model: { provider: "test", id: "model" },
-    webAccess: false, thinking: "max", context: "fork", tools: ["read"], async: false, timeoutMs: 100,
+    webAccess: false, webTools: [], thinking: "max", context: "fork", tools: ["read"], async: false, timeoutMs: 100,
   });
   for (const bad of [{ async: "true" }, { thinking: "unlimited" }, { timeoutMs: 99 }, { context: "resume" }, { prompt: "" }]) {
     assert.throws(() => normalizeTaskSpec({ prompt: "Inspect", ...bad }, defaults));
@@ -235,12 +312,12 @@ test("maximum text survives JSON escaping within the envelope bound", () => {
 });
 
 test("exact capability verification keeps the reserved parent control separate from requested execution tools", () => {
-  assert.deepEqual(verifyCapabilities(["read"], inventory()), {
+  assert.deepEqual(verifyCapabilities(["read"], [], inventory()), {
     requested: ["read"], registered: ["read", "rpc_subagents_parent"], active: ["read", "rpc_subagents_parent"],
     declared: ["read", "rpc_subagents_parent"], callable: ["read"], exposures: { read: "direct", rpc_subagents_parent: "model-only" },
     reachable: ["read", "rpc_subagents_parent"],
   });
-  assert.deepEqual(verifyCapabilities([], { registered: ["rpc_subagents_parent"], active: ["rpc_subagents_parent"], declared: ["rpc_subagents_parent"],
+  assert.deepEqual(verifyCapabilities([], [], { registered: ["rpc_subagents_parent"], active: ["rpc_subagents_parent"], declared: ["rpc_subagents_parent"],
     callable: [], exposures: { rpc_subagents_parent: "model-only" } }), {
     requested: [], registered: ["rpc_subagents_parent"], active: ["rpc_subagents_parent"], declared: ["rpc_subagents_parent"], callable: [],
     exposures: { rpc_subagents_parent: "model-only" }, reachable: ["rpc_subagents_parent"],
@@ -248,29 +325,29 @@ test("exact capability verification keeps the reserved parent control separate f
 });
 
 test("the exact default tools are verified against inventory, not a built-in-only name enum", () => {
-  assert.deepEqual(verifyCapabilities(undefined, {
+  assert.deepEqual(verifyCapabilities(undefined, [], {
     registered: ["read", "write", "edit", "bash", "codemode", "rpc_subagents_parent"],
     active: ["read", "write", "edit", "bash", "codemode", "rpc_subagents_parent"],
     declared: ["read", "write", "edit", "bash", "codemode", "rpc_subagents_parent"], callable: ["read", "write", "edit", "bash", "codemode"],
     exposures: { read: "direct", write: "direct", edit: "direct", bash: "direct", codemode: "direct", rpc_subagents_parent: "model-only" },
   }).reachable, ["bash", "codemode", "edit", "read", "rpc_subagents_parent", "write"]);
-  assert.deepEqual(verifyCapabilities(["custom.inspect"], {
+  assert.deepEqual(verifyCapabilities(["custom.inspect"], [], {
     registered: ["custom.inspect", "rpc_subagents_parent", "inactive", "hidden"], active: ["rpc_subagents_parent"], declared: ["rpc_subagents_parent"],
     callable: ["custom.inspect"], exposures: { "custom.inspect": "deferred", rpc_subagents_parent: "model-only", inactive: "direct", hidden: "hidden" },
   }).reachable, ["custom.inspect", "rpc_subagents_parent"]);
 });
 
 test("missing, extra callable and extra model-only tools reject even when the requested tool is present", () => {
-  assert.throws(() => verifyCapabilities(["write"], inventory()), /missing \[write\]; unexpected \[read\]/);
-  assert.throws(() => verifyCapabilities([], inventory()), /unexpected \[read\]/);
-  assert.throws(() => verifyCapabilities(["read"], inventory({ registered: ["read", "rpc_subagents_parent", "extra"], callable: ["read", "extra"],
+  assert.throws(() => verifyCapabilities(["write"], [], inventory()), /missing \[write\]; unexpected \[read\]/);
+  assert.throws(() => verifyCapabilities([], [], inventory()), /unexpected \[read\]/);
+  assert.throws(() => verifyCapabilities(["read"], [], inventory({ registered: ["read", "rpc_subagents_parent", "extra"], callable: ["read", "extra"],
     exposures: { read: "direct", rpc_subagents_parent: "model-only", extra: "codemode" } })), /unexpected \[extra\]/);
-  assert.throws(() => verifyCapabilities(["read"], inventory({ registered: ["read", "rpc_subagents_parent", "extra"],
+  assert.throws(() => verifyCapabilities(["read"], [], inventory({ registered: ["read", "rpc_subagents_parent", "extra"],
     active: ["read", "rpc_subagents_parent", "extra"], declared: ["read", "rpc_subagents_parent", "extra"],
     exposures: { read: "direct", rpc_subagents_parent: "model-only", extra: "model-only" } })), /unexpected \[extra\]/);
-  assert.throws(() => verifyCapabilities(["read"], { registered: ["read"], active: ["read"], declared: ["read"], callable: ["read"], exposures: { read: "direct" } }),
+  assert.throws(() => verifyCapabilities(["read"], [], { registered: ["read"], active: ["read"], declared: ["read"], callable: ["read"], exposures: { read: "direct" } }),
     /missing \[rpc_subagents_parent\]/);
-  assert.throws(() => verifyCapabilities(["read"], inventory({ callable: ["read", "rpc_subagents_parent"],
+  assert.throws(() => verifyCapabilities(["read"], [], inventory({ callable: ["read", "rpc_subagents_parent"],
     exposures: { read: "direct", rpc_subagents_parent: "direct" } })), /must be declared with model-only/);
 });
 
@@ -298,7 +375,7 @@ test("inventory lists and metadata reject oversized input while the maximum exec
   const registered = [...requested, "rpc_subagents_parent"];
   const maximum = { registered, active: registered, declared: registered, callable: requested,
     exposures: Object.fromEntries([...requested.map((name) => [name, "direct"]), ["rpc_subagents_parent", "model-only"]]) };
-  assert.equal(verifyCapabilities(requested, maximum).reachable.length, 65);
+  assert.equal(verifyCapabilities(requested, [], maximum).reachable.length, 65);
   const decoded = decodeCoordinationEnvelope(encodeCoordinationEnvelope(launch, { kind: "inventory", inventory: maximum }), launch);
   assert.equal(decoded.inventory.registered.length, 65);
   assert.equal(decoded.inventory.exposures.rpc_subagents_parent, "model-only");
@@ -311,12 +388,12 @@ test("inventory lists and metadata reject oversized input while the maximum exec
 
 test("capability copies and exposure records do not inherit tool names as object behavior", () => {
   const source = inventory();
-  const capabilities = verifyCapabilities(["read"], source);
+  const capabilities = verifyCapabilities(["read"], [], source);
   source.callable.push("extra");
   source.exposures.read = "hidden";
   assert.deepEqual(capabilities.callable, ["read"]);
   assert.equal(capabilities.exposures.read, "direct");
-  const special = verifyCapabilities(["__proto__"], {
+  const special = verifyCapabilities(["__proto__"], [], {
     registered: ["__proto__", "rpc_subagents_parent"], active: ["__proto__", "rpc_subagents_parent"], declared: ["__proto__", "rpc_subagents_parent"],
     callable: ["__proto__"], exposures: Object.fromEntries([["__proto__", "direct"], ["rpc_subagents_parent", "model-only"]]),
   });

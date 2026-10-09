@@ -98,8 +98,8 @@ test("the bootstrap command emits a verifiable inventory without a model call or
   assert.deepEqual(envelope.inventory.declared, activeTools);
   assert.deepEqual(envelope.inventory.callable, ["read", "bash"]);
   assert.equal(collectToolInventory(pi).exposures.codemode, "model-only");
-  assert.deepEqual(verifyCapabilities(["read", "bash", "codemode"], envelope.inventory).reachable, ["bash", "codemode", "read", PARENT_TOOL_NAME]);
-  assert.throws(() => verifyCapabilities(["read", "bash"], envelope.inventory), /unexpected \[codemode\]/);
+  assert.deepEqual(verifyCapabilities(["read", "bash", "codemode"], [], envelope.inventory).reachable, ["bash", "codemode", "read", PARENT_TOOL_NAME]);
+  assert.throws(() => verifyCapabilities(["read", "bash"], [], envelope.inventory), /unexpected \[codemode\]/);
   assert.deepEqual(pi.state.events, []);
 });
 

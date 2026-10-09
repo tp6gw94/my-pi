@@ -101,22 +101,40 @@ return { taskId, status: result.status, text: result.text };
 
 ## 指定子任務工具
 
-`tools` 可換掉 child 的預設工具清單。預設是 `read`、`write`、`edit`、`bash`、`codemode`；傳入自訂陣列會完整取代預設，傳 `[]` 表示不提供執行工具。`rpc_subagents_parent` 由 child 端另外以 model-only 加入，不受 `tools` 影響。
+`tools` 控制 child 的能力。純名稱會完整取代預設執行工具清單 `read`、`write`、`edit`、`bash`、`codemode`；`+名稱`／`-名稱` 則按順序調整同一份預設清單，兩者不能混用，也不能使用 `*` 等萬用字元。`[]` 表示不提供執行工具。可選的內建執行工具還包括 `grep`、`find`、`ls`。`rpc_subagents_parent` 由 child 端另外以 model-only 加入，不受 `tools` 影響。
 
 ```js
 const task = await tools.rpc_subagents_run({
 	name: "Read-only review",
 	prompt: "Inspect the API without edits. Report concrete risks.",
-	tools: ["read", "bash"]
+	tools: ["+bash", "-codemode"]
 });
 return task;
 ```
 
-`webAccess` 是獨立於上述五個預設工具的能力：省略 `tools` 時預設為 `true`；明確提供自訂 `tools`（包含 `[]`）時預設為 `false`。可明確設定 `webAccess: true` 加入網路能力，或 `false` 關閉。排程會保存此選項；舊排程已有明確 `tools` 時不會自動加入網路能力。
+在 `tools` 中指名已安裝的 pi-web-access 工具時，會自動載入網路支援，不需要 `webAccess: true`，而且只開放指名的功能工具：`web_search`（搜尋網路）、`source_check`（查核宣稱與來源）、`fetch_content`（抓取頁面或文件內容）、`get_search_content`（讀取已保存的結果內容）。`web_enable` 是 child 在 auto／dynamic 模式下的啟用機制，不能直接選取。重新命名或停用的工具依安裝設定處理：指名已停用或已改名的舊名稱會明確失敗，使用目前名稱則成功。
 
-啟用時只載入已安裝的本機 `pi-web-access` 入口，不下載、安裝套件或開啟其他 extension。沿用既有設定與繼承的憑證；支援 `auto`、`dynamic`、`eager`、重新命名及停用工具。若有可用的 `web_enable`，child 依其 prompt 指示自行啟用；eager 模式不要求 loader。`capabilities.webTools` 列出核准的設定工具，`active`／`reachable` 在啟用後更新。套件、入口、factory 缺失或全部工具停用時，任務明確失敗，不宣稱可用。`--tools` 包含完整精確的核准 family，parent 仍拒絕其他額外可呼叫工具。
+```js
+const fetched = await tools.rpc_subagents_run({
+	name: "Fetch docs",
+	prompt: "Fetch https://example.com and quote the heading.",
+	tools: ["+fetch_content"]
+});
+const renamed = await tools.rpc_subagents_run({
+	name: "Read-only fetch",
+	prompt: "Read src and fetch the linked spec.",
+	tools: ["read", "get_page"]
+});
+return [fetched.webTools, renamed.webTools];
+```
 
-這只是工具清單，不是沙箱。child 與主程序同權限，仍可能依 prompt 指示或其他路徑碰觸檔案。需要隔離時請自行限制工作目錄與指令。排程的 `tools` 同樣會保存，並在每次觸發時沿用，包含 `[]`。
+`+fetch_content` 保留五個預設執行工具並只加入該網路工具；純名稱 `["read", "get_page"]` 則把執行工具換成 `read`。回傳的 `webTools` 是解析後的網路工具清單。
+
+`webAccess` 是相容用的舊選項，也是完整 family 的開關：省略 `tools` 時預設為 `true`；明確提供 `tools`（包含 `[]`）時預設為 `false`。指名網路工具時不需要 `webAccess: true`，也不能用它擴張選取；`webAccess: false` 與指名網路工具互相矛盾，會明確失敗。
+
+啟用時只載入已安裝的本機 `pi-web-access` 入口，不下載、安裝套件或開啟其他 extension。沿用既有設定與繼承的憑證；支援 `auto`、`dynamic`、`eager`、重新命名及停用工具。若有可用的 `web_enable`，child 依其 prompt 指示啟用，且只能啟用被選取的功能工具；eager 模式不要求 loader。`capabilities.webTools` 列出解析後的網路工具，`active`／`reachable` 在啟用後更新。套件、入口、factory 缺失或全部工具停用時，任務明確失敗，不宣稱可用。`--tools` 只包含執行工具、parent，以及被選取的功能工具與必要的 loader，parent 仍拒絕其他額外可呼叫工具。
+
+這只是工具清單，不是沙箱。child 與主程序同權限，仍可能依 prompt 指示或其他路徑碰觸檔案。需要隔離時請自行限制工作目錄與指令。排程會保存解析後的執行工具與網路工具，觸發時沿用，不會重新解讀 `+`／`-` 表示式，包含 `[]`。
 
 ### `safe-pi` 與 append-path
 
@@ -228,7 +246,7 @@ return await tools.rpc_subagents_schedule_cancel({ scheduleId, abortRunning: tru
 
 `pause` 不停止既有任務。`cancel` 不復活排程。`abortRunning: true` 只取消該排程自己的 active task IDs。在互動畫面的排程頁，`p` 暫停或恢復，`c` 只取消未來觸發，`a` 取消並中止既有任務。
 
-排程任務不支援 `session`：建立時在取得 owner 前即拒絕，還原持久化資料時也會 fail closed。排程保存的 `tools` 會原樣沿用，包含 `[]`。
+排程任務不支援 `session`：建立時在取得 owner 前即拒絕，還原持久化資料時也會 fail closed。排程保存解析後的執行與網路工具選取，觸發時沿用。
 
 重新載入後，過期的一次性排程標記為 `missed`。重複排程只安排嚴格晚於現在的觸發，不補跑離線期間的工作。同一排程若已有排隊或執行中的任務，略過當次觸發。
 

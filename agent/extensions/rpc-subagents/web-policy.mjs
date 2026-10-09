@@ -1,9 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_EXECUTION_TOOLS, normalizeTools } from "./coordination.mjs";
+import { BOOTSTRAP_COMMAND_NAME, DEFAULT_EXECUTION_TOOLS, PARENT_TOOL_NAME, WEB_LOADER_TOOL_NAME } from "./coordination.mjs";
 
 export const WEB_APPROVED_ENV = "RPC_SUBAGENTS_WEB_TOOLS";
+
+export const WEB_SLOTS = Object.freeze([
+  { key: "webSearch", defaultName: "web_search", capability: "search", label: "web search" },
+  { key: "sourceCheck", defaultName: "source_check", capability: "source-check", label: "source checking" },
+  { key: "fetchContent", defaultName: "fetch_content", capability: "fetch", label: "content fetching" },
+  { key: "getSearchContent", defaultName: "get_search_content", capability: "stored-content", label: "stored-result retrieval" },
+]);
+
+const toolNamePattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const reservedExecutionNames = new Set([...DEFAULT_EXECUTION_TOOLS, "grep", "find", "ls", PARENT_TOOL_NAME, BOOTSTRAP_COMMAND_NAME]);
 
 export function webConfigPath(env = process.env, home = homedir()) {
   if (env.PI_CODING_AGENT_DIR) return join(env.PI_CODING_AGENT_DIR, "web-search.json");
@@ -16,42 +26,42 @@ export function webConfigPath(env = process.env, home = homedir()) {
   return existsSync(agent) ? agent : existsSync(legacy) ? legacy : agent;
 }
 
-export function resolveWebTools(config, requested = []) {
-  const defaults = { webSearch: "web_search", sourceCheck: "source_check", fetchContent: "fetch_content", getSearchContent: "get_search_content" };
-  const mode = config.toolActivation ?? "auto";
-  if (!["auto", "dynamic", "eager"].includes(mode)) throw new Error("Invalid pi-web-access toolActivation");
-  if (config.toolNames !== undefined && (!config.toolNames || typeof config.toolNames !== "object" || Array.isArray(config.toolNames))) throw new Error("Invalid pi-web-access toolNames");
-  const names = [];
-  for (const [key, fallback] of Object.entries(defaults)) {
-    const raw = config.toolNames?.[key] === undefined ? fallback : config.toolNames[key];
-    if (typeof raw !== "string" || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(raw.trim())) throw new Error(`Invalid pi-web-access toolNames.${key}`);
-    const enabled = typeof config.tools?.[key]?.enabled === "boolean" ? config.tools[key].enabled
-      : !["webSearch", "sourceCheck"].includes(key) || config.webSearch?.enabled !== false;
-    if (enabled) {
-      if (raw.trim() === "web_enable") throw new Error("Web tool uses reserved loader name");
-      names.push(raw.trim());
-    }
-  }
-  if (!names.length) throw new Error("Web access requested but all installed web tools are disabled");
-  if (mode !== "eager") names.push("web_enable");
-  assertWebTools(names, requested);
-  return names;
+function slotEnabled(config, key) {
+  const override = config.tools?.[key]?.enabled;
+  if (typeof override === "boolean") return override;
+  return !["webSearch", "sourceCheck"].includes(key) || config.webSearch?.enabled !== false;
 }
 
-export function assertWebTools(names, requested = []) {
-  normalizeTools(names);
-  if (names.length > 16) throw new Error("Web tool inventory exceeds limit");
-  const reserved = new Set([...DEFAULT_EXECUTION_TOOLS, "grep", "find", "ls", ...requested]);
-  if (names.some((name) => reserved.has(name))) throw new Error("Web tool collision with requested or reserved tools");
-}
-
-export function configuredWebTools(requested) {
-  const path = webConfigPath();
+export function readWebCatalog(env = process.env, home = homedir()) {
+  const path = webConfigPath(env, home);
   let config = {};
   if (existsSync(path)) {
     try { config = JSON.parse(readFileSync(path, "utf8")); }
     catch { throw new Error("Cannot parse installed pi-web-access configuration"); }
     if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("Invalid pi-web-access configuration root");
   }
-  return resolveWebTools(config, requested);
+  const mode = config.toolActivation ?? "auto";
+  if (!["auto", "dynamic", "eager"].includes(mode)) throw new Error("Invalid pi-web-access toolActivation");
+  if (config.toolNames !== undefined && (!config.toolNames || typeof config.toolNames !== "object" || Array.isArray(config.toolNames))) {
+    throw new Error("Invalid pi-web-access toolNames");
+  }
+  const slots = WEB_SLOTS.map((slot) => {
+    const raw = config.toolNames?.[slot.key] === undefined ? slot.defaultName : config.toolNames[slot.key];
+    if (typeof raw !== "string" || !toolNamePattern.test(raw.trim())) throw new Error(`Invalid pi-web-access toolNames.${slot.key}`);
+    return { ...slot, name: raw.trim() };
+  });
+  for (const slot of slots) {
+    if (slot.name === WEB_LOADER_TOOL_NAME) throw new Error("Web tool uses reserved loader name");
+    if (reservedExecutionNames.has(slot.name) || slot.name.startsWith("rpc_subagents_")) {
+      throw new Error(`Web tool name ${slot.name} collides with a reserved tool`);
+    }
+  }
+  const enabledSlots = slots.filter((slot) => slotEnabled(config, slot.key));
+  const seen = new Set();
+  for (const slot of enabledSlots) {
+    if (seen.has(slot.name)) throw new Error(`Duplicate installed web tool name ${slot.name} from pi-web-access configuration`);
+    seen.add(slot.name);
+  }
+  const reserved = new Set([...WEB_SLOTS.map((slot) => slot.defaultName), ...slots.map((slot) => slot.name), WEB_LOADER_TOOL_NAME]);
+  return Object.freeze({ mode, slots: enabledSlots, enabled: Object.freeze(enabledSlots.map((slot) => slot.name)), reserved });
 }

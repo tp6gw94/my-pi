@@ -21,7 +21,54 @@ Choose a task contract with a prompt, acceptance evidence, file ownership, and a
 
 For an explicit model, use `model: { provider: "<provider>", id: "<exact-model-id>" }`. Pass `thinking: "high"` separately. Omitted model and thinking use the calling context. Without a current model, supply the model object. Launch arguments control routing, capabilities, context, and timing; task prose does not configure them. The child reports its actual model and supported thinking level from runtime settings when available; the parent compares the report with launch arguments and task metadata. This is launch verification, not a request for the child to select or switch models. A mismatch fails rather than falling back.
 
-Check the child's capabilities before assigning work. Children use `--no-skills --no-extensions --no-prompt-templates`. Only explicit provider bootstrap sources, the child bridge, and the controlled installed pi-web-access wrapper (when requested) load. Fleet accepts no named-agent profile. `tools` replaces the default execution list (`read`, `write`, `edit`, `bash`, `codemode`); `[]` leaves only the model-only `rpc_subagents_parent` unless `webAccess: true` is explicit. Web access is independent of the five execution tools: omitted `tools` defaults `webAccess` to true; explicit `tools` defaults it to false. Set `webAccess: false` to disable it. Enabled tasks use only the trusted local installed pi-web-access entrypoint with inherited credentials and existing configuration. Preserve auto/dynamic/eager activation: follow the available loader prompt snippets, call `web_enable` when needed, and inspect `capabilities.webTools` plus `reachable` after activation. Renamed and disabled tools follow package configuration; absent package, entrypoint, factory, or all-disabled tools fail startup. It is a tool list, not a sandbox: a read-only prompt is an instruction, not an enforced permission boundary. Put required operating instructions in the prompt. For missing providers or startup dialogs, read the [bootstrap and startup limits](../../README.md). Provider dialogs during `session_start` are unsupported. Post-start dialogs support explicit responses.
+Check the child's capabilities before assigning work. Children use `--no-skills --no-extensions --no-prompt-templates`. Only explicit provider bootstrap sources, the child bridge, and the controlled installed pi-web-access wrapper (when requested) load. Fleet accepts no named-agent profile.
+
+### Child capability selection
+
+`tools` controls child capabilities. Selection applies at task start and at schedule creation; it never changes a live child. Every child also gets the model-only `rpc_subagents_parent` bridge, which `tools` never changes.
+
+| Tool | Use |
+| --- | --- |
+| `read`, `write`, `edit` | Default file access. |
+| `bash` | Default command execution. |
+| `codemode` | Default codemode scripting. |
+| `grep`, `find`, `ls` | Optional built-ins for text search, file search, and directory listing; select them like any other name. |
+| `web_search` | Search the web. |
+| `source_check` | Check a claim against sources. |
+| `fetch_content` | Fetch page or document content. |
+| `get_search_content` | Read stored result content. |
+
+Omitted `tools` keeps the five execution defaults and the full enabled web family. Plain names replace the execution defaults, so `["read", "get_page"]` runs exactly `read` plus the configured `get_page`. `[]` keeps only `rpc_subagents_parent`. Signed entries adjust the five defaults in order, so `+fetch_content` keeps all five and adds fetch. Plain and signed entries cannot mix.
+
+Signed selection:
+
+```js
+const signed = await tools.rpc_subagents_run({
+	name: "Search with defaults",
+	prompt: "Search the web, then report sources.",
+	tools: ["+web_search", "-edit"]
+});
+return signed.webTools;
+```
+
+Plain selection with automatic web support:
+
+```js
+const replaced = await tools.rpc_subagents_run({
+	name: "Fetch and read",
+	prompt: "Read src and fetch the linked specification.",
+	tools: ["read", "fetch_content"]
+});
+return replaced.webTools;
+```
+
+Signed entries apply in order. Repeating an entry is a no-op, and `+name` then `-name` ends with `name` off. Removing an absent name does nothing. Wildcards, empty entries, duplicate plain names, mixed plain/signed entries, and reserved fleet names reject. Naming a web tool loads support automatically, so omit `webAccess` for named selections; `webAccess: true` beside a proper named subset rejects, and `webAccess: false` beside a named web tool rejects.
+
+Configured web names come from `toolNames` and disabled slots in the installed `web-search.json`. The current renamed or enabled name succeeds; a renamed-away, disabled, or unknown name fails. Positive conflicts reject instead of silently overriding the selection. `web_enable` is the child's activation helper in auto/dynamic modes and is not selectable.
+
+Legacy `webAccess` remains. Omitted `tools` defaults it to true for the full enabled family; explicit `tools`, including `[]`, defaults it to false unless an entry names an installed web tool, which enables web support without `webAccess`; explicit true with a named proper subset rejects. Schedules persist the resolved execution and web tools and reuse them on every fire without reinterpreting `+`/`-` entries. Enabled tasks use only the trusted local installed pi-web-access entrypoint with inherited credentials and existing configuration. Preserve auto/dynamic/eager activation inside the selected subset: follow the available loader prompt snippets, call `web_enable` when needed, and inspect `capabilities.webTools` plus `reachable` after activation. Absent package, entrypoint, factory, or all-disabled tools fail startup.
+
+It is a tool list, not a sandbox: a read-only prompt is an instruction, not an enforced permission boundary. Put required operating instructions in the prompt. For missing providers or startup dialogs, read the [bootstrap and startup limits](../../README.md). Provider dialogs during `session_start` are unsupported. Post-start dialogs support explicit responses.
 
 Assign parallel tasks disjoint files or read-only work. Children share their selected `cwd`. Fleet creates no worktrees and takes no project-file locks. Separate writable directories before concurrent edits.
 

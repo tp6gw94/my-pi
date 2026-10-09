@@ -1,5 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { normalizeTools, normalizeSessionReference } from "./coordination.mjs";
+import { readWebCatalog } from "./web-policy.mjs";
+import { resolveTaskCapabilities } from "./capability.mjs";
 
 export { normalizeTools, normalizeSessionReference } from "./coordination.mjs";
 
@@ -44,17 +46,19 @@ export function normalizeTaskSpec(input, defaults = {}) {
   const cwd = nonempty(input.cwd ?? defaults.cwd, "cwd");
   const asynchronous = input.async ?? false;
   if (typeof asynchronous !== "boolean") throw new Error("async must be boolean");
-  const webAccess = input.webAccess === undefined ? input.tools === undefined : input.webAccess;
-  if (typeof webAccess !== "boolean") throw new Error("webAccess must be boolean");
+  const resolved = resolveTaskCapabilities({ tools: input.tools, webAccess: input.webAccess, webTools: input.webTools, webToolSlots: input.webToolSlots },
+    () => readWebCatalog());
   return {
-    webAccess,
+    webAccess: resolved.webAccess,
+    webTools: resolved.webTools,
+    ...(resolved.webToolSlots === undefined ? {} : { webToolSlots: resolved.webToolSlots }),
     prompt: nonempty(input.prompt, "prompt", 262144),
     name: nonempty(input.name ?? "RPC task", "name", 160),
     cwd: isAbsolute(cwd) ? resolve(cwd) : resolve(defaults.cwd ?? process.cwd(), cwd),
     model: { provider: nonempty(model.provider, "model.provider", 160), id: nonempty(model.id, "model.id", 512) },
     thinking,
     ...(session === undefined ? { context } : { session }),
-    tools: normalizeTools(input.tools),
+    tools: resolved.tools,
     async: asynchronous,
     timeoutMs: boundedInteger(input.timeoutMs ?? defaults.timeoutMs ?? 1800000, "timeoutMs", 100, 86400000),
   };

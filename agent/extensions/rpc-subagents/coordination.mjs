@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 
 export const PARENT_TOOL_NAME = "rpc_subagents_parent";
+export const WEB_LOADER_TOOL_NAME = "web_enable";
 export const BOOTSTRAP_COMMAND_NAME = "rpc-subagents-bootstrap";
 export const BOOTSTRAP_PROMPT = `/${BOOTSTRAP_COMMAND_NAME}`;
 export const COORDINATION_PREFIX = "rpc-subagents-coordination:";
@@ -154,6 +155,7 @@ export function validateToolInventory(value) {
   const callable = names(value.callable, "inventory.callable", COORDINATION_LIMITS.maxInventoryTools);
   const rawExposures = object(value.exposures, "inventory.exposures");
   const exposureNames = names(Object.keys(rawExposures), "inventory.exposures", COORDINATION_LIMITS.maxInventoryTools);
+
   const registeredSet = new Set(registered);
   const activeSet = new Set(active);
   const declaredSet = new Set(declared);
@@ -162,7 +164,8 @@ export function validateToolInventory(value) {
     if (!registeredSet.has(name)) throw new Error(`Inventory tool ${name} is not registered`);
   }
   if (active.length !== declared.length || active.some((name) => !declaredSet.has(name))) throw new Error("Inventory active and declared tools must match");
-  const entries = registered.map((name) => {
+
+  const exposureEntries = registered.map((name) => {
     if (!Object.hasOwn(rawExposures, name) || !exposures.has(rawExposures[name])) throw new Error(`Missing or invalid exposure for ${name}`);
     const exposure = rawExposures[name];
     if (exposure === "hidden" && activeSet.has(name)) throw new Error(`Hidden tool ${name} cannot be declared`);
@@ -170,34 +173,43 @@ export function validateToolInventory(value) {
     if (expectedCallable !== callableSet.has(name)) throw new Error(`Callable inventory disagrees with exposure for ${name}`);
     return [name, exposure];
   });
+
   const webTools = value.webTools === undefined ? undefined : names(value.webTools, "inventory.webTools", COORDINATION_LIMITS.maxWebTools);
   if (webTools?.some((name) => !registeredSet.has(name))) throw new Error("Web inventory must be a subset of registered tools");
-  return { registered, active, declared, callable, exposures: Object.fromEntries(entries),
+  return { registered, active, declared, callable, exposures: Object.fromEntries(exposureEntries),
     ...(webTools === undefined ? {} : { webTools }) };
 }
 
-export function verifyCapabilities(requested, inventory, webAccess = false, approvedWebTools) {
+export function verifyCapabilities(requested, selectedWebTools, inventory, approvedWebTools) {
   const tools = normalizeTools(requested);
+  const webTools = normalizeTools(selectedWebTools);
   const normalized = validateToolInventory(inventory);
+  if (webTools.includes(WEB_LOADER_TOOL_NAME)) throw new Error(`${WEB_LOADER_TOOL_NAME} is activation machinery, not a selected web tool`);
+  const webAccess = webTools.length > 0;
   const reachable = [...new Set([...normalized.declared, ...normalized.callable])].sort();
   const reachableSet = new Set(reachable);
-  const webTools = normalized.webTools ?? [];
-  if (!webAccess && webTools.length) throw new Error("Unexpected web capability when webAccess is disabled");
-  if (webAccess) {
-    if (webTools.some((name) => normalized.exposures[name] !== "direct")) throw new Error("Web tools must retain direct exposure");
-    if (!webTools.length) throw new Error("Web access requested but no installed web tools were captured");
-    const reserved = new Set([...DEFAULT_EXECUTION_TOOLS, "grep", "find", "ls", ...tools, PARENT_TOOL_NAME, BOOTSTRAP_COMMAND_NAME]);
+  const reportedWebTools = normalized.webTools ?? [];
+
+  if (!webAccess) {
+    if (reportedWebTools.length) throw new Error("Unexpected web capability when web access is disabled");
+    if (normalized.registered.includes(WEB_LOADER_TOOL_NAME)) throw new Error("Unexpected web loader when web access is disabled");
+  } else {
+    if (!Array.isArray(approvedWebTools)) throw new Error("Web access requires the approved resolved web tools");
+    const approvedTools = normalizeTools(approvedWebTools);
+    if (approvedTools.some((name) => !webTools.includes(name) && name !== WEB_LOADER_TOOL_NAME)) throw new Error("Approved web tools must extend the selected functional tools with the loader only");
+    if (webTools.some((name) => !approvedTools.includes(name))) throw new Error("Approved web tools must include every selected functional tool");
+    if (reportedWebTools.length !== approvedTools.length || reportedWebTools.some((name) => !approvedTools.includes(name))) throw new Error("Web tool family changed after bootstrap");
+    if (reportedWebTools.some((name) => normalized.exposures[name] !== "direct")) throw new Error("Web tools must retain direct exposure");
+    const reserved = new Set([...DEFAULT_EXECUTION_TOOLS, "grep", "find", "ls", ...tools, PARENT_TOOL_NAME, BOOTSTRAP_COMMAND_NAME, WEB_LOADER_TOOL_NAME]);
     if (webTools.some((name) => reserved.has(name) || name.startsWith("rpc_subagents_"))) throw new Error("Web tool collision with requested or reserved tools");
-    if (approvedWebTools && (webTools.length !== approvedWebTools.length || webTools.some((name) => !approvedWebTools.includes(name)))) {
-      throw new Error("Web tool family changed after bootstrap");
-    }
-    if (!webTools.some((name) => reachableSet.has(name))) throw new Error("Web access has no reachable loader or eager tools");
+    if (!approvedTools.some((name) => reachableSet.has(name))) throw new Error("Web access has no reachable loader or eager tools");
   }
-  const expected = new Set([...tools, PARENT_TOOL_NAME]);
-  const allowed = new Set([...expected, ...(webAccess ? webTools : [])]);
-  const missing = [...expected].filter((name) => !reachableSet.has(name)).sort();
-  const unexpected = [...new Set([...reachable, ...(webAccess ? normalized.registered : [])])].filter((name) => !allowed.has(name)).sort();
-  if (missing.length || unexpected.length) throw new Error(`Capability mismatch: missing [${missing.join(", ")}]; unexpected [${unexpected.join(", ")}]`);
+
+  const requiredTools = new Set([...tools, PARENT_TOOL_NAME]);
+  const permittedTools = new Set([...requiredTools, ...(webAccess ? reportedWebTools : [])]);
+  const missingTools = [...requiredTools].filter((name) => !reachableSet.has(name)).sort();
+  const unexpectedTools = [...new Set([...reachable, ...(webAccess ? normalized.registered : [])])].filter((name) => !permittedTools.has(name)).sort();
+  if (missingTools.length || unexpectedTools.length) throw new Error(`Capability mismatch: missing [${missingTools.join(", ")}]; unexpected [${unexpectedTools.join(", ")}]`);
   if (normalized.exposures[PARENT_TOOL_NAME] !== "model-only" || !normalized.declared.includes(PARENT_TOOL_NAME)) {
     throw new Error(`${PARENT_TOOL_NAME} must be declared with model-only exposure`);
   }

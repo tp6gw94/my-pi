@@ -1,4 +1,5 @@
 export const PARENT_TOOL_NAME: "rpc_subagents_parent";
+export const WEB_LOADER_TOOL_NAME: "web_enable";
 export const BOOTSTRAP_COMMAND_NAME: "rpc-subagents-bootstrap";
 export const BOOTSTRAP_PROMPT: "/rpc-subagents-bootstrap";
 export const COORDINATION_PREFIX: "rpc-subagents-coordination:";
@@ -83,4 +84,4 @@ export function parseCoordinationRecord(record: unknown, binding: LaunchBinding)
 /** Validates bounded names, complete exposure metadata, and actual active/declared/callable consistency. */
 export function validateToolInventory(value: unknown): ToolInventory;
 /** Requires declared union callable to equal requested union the model-only parent tool. Reachable is sorted. */
-export function verifyCapabilities(requested: unknown, inventory: unknown, webAccess?: boolean, approvedWebTools?: string[]): Capabilities;
+export function verifyCapabilities(requested: unknown, selectedWebTools: unknown, inventory: unknown, approvedWebTools?: string[]): Capabilities;
