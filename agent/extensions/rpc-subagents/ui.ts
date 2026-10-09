@@ -31,7 +31,7 @@ const tpsLabel = (task: TaskResult) => {
   const known = typeof tps === "number" && Number.isFinite(tps) && tps > 0;
   return `\uf0e7 ${known ? tps.toFixed(1) : "—"} tok/s`;
 };
-const shortId = (id: string) => id.slice(0, 8);
+const shortId = (id: string) => id.slice(0, 4);
 const clean = (text: unknown) => safeText(text);
 const row = (text: unknown) => singleLineText(text);
 
@@ -71,7 +71,7 @@ export function installFleetWidget(ctx: ExtensionContext, model: FleetUIModel): 
         const usable = Math.max(1, width);
         const lines = [theme.fg("accent", `RPC subagents  \uf0ae ${active.length}  ${expanded ? "\uf078 展開" : "\uf054 收合"} Ctrl+O  /rpc-subagents`)];
         for (const task of active.slice(0, 3)) {
-          lines.push(`${shortId(task.taskId)} ${tpsLabel(task)} ${row(task.name)} ${row(task.model.provider)}/${row(task.model.id)} ${row(task.thinking ?? "unknown")} ${row(label(task.status))} ${elapsed(task)}${timeoutLabel(task)} ${row(task.currentTools.join(", "))}`);
+          lines.push(`${shortId(task.taskId)} ${row(task.name)} ${row(task.model.provider)}/${row(task.model.id)} ${row(task.thinking ?? "unknown")} ${row(label(task.status))} ${elapsed(task)}${timeoutLabel(task)} ${row(task.currentTools.join(", "))} ${tpsLabel(task)}`);
         }
         if (active.length > 3) lines.push(`另有 ${active.length - 3} 個任務`);
         if (next) lines.push(`下次排程 ${shortId(next.scheduleId)} ${row(next.name)} ${new Date(next.nextAt!).toLocaleString("zh-TW")}`);
@@ -92,7 +92,7 @@ export function installFleetWidget(ctx: ExtensionContext, model: FleetUIModel): 
             preview = { text: task.text, width: usable, lines: text.trim() ? wrapped.slice(-4) : ["（尚無輸出）"] };
             cache.set(task.taskId, preview);
           }
-          lines.push(theme.fg("muted", `${shortId(task.taskId)} ${tpsLabel(task)} 輸出 ${row(label(task.status))}${task.truncated ? "（保留內容已截短）" : ""}`));
+          lines.push(theme.fg("muted", `${shortId(task.taskId)} 輸出 ${row(label(task.status))}${task.truncated ? "（保留內容已截短）" : ""} ${tpsLabel(task)}`));
           const output = preview.lines.slice(-(height - 1));
           lines.push(...output);
           budget -= output.length + 1;
@@ -169,10 +169,10 @@ export async function showFleetScreen(ctx: ExtensionContext, model: FleetUIModel
             if (tab === "task") {
               const task = item as TaskResult;
               const requests = task.state.status === "waiting_input" ? task.state.requests ?? [] : [];
-              text = `${task.taskId} ${tpsLabel(task)} 最新回應觀測視窗\n${clean(task.name)}\n模型 ${clean(task.model.provider)}/${clean(task.model.id)} ${row(task.thinking ?? "unknown")}\n${label(task.status)} ${elapsed(task)}${timeoutLabel(task)}\n目錄 ${clean(task.cwd)}\n工具 ${clean(task.currentTools.join(", "))}\n${task.capabilities ? `能力 ${clean(task.capabilities.reachable.join(", "))}\n` : ""}${task.sessionId ? `工作階段 ${clean(task.sessionId)}${task.sessionReusable === true ? " 可續用" : " 不可續用"}\n` : ""}${task.error ? `錯誤 ${clean(task.error)}\n` : ""}${requests.length ? `待回覆請求 ${requests.map((request) => `${clean(request.requestId)} ${clean(request.question)}`).join("\n")}\n` : ""}${task.state.status === "waiting_input" && task.state.dialogs.length ? `待回應對話 ${task.state.dialogs.map((dialog) => `${clean(dialog.id)} ${clean(dialog.title ?? dialog.method)}`).join("\n")}\n` : ""}\n${safeText(task.text, 65536)}${task.truncated ? "\n[內容已截短，完整資料請開啟 viewer]" : ""}`;
+              text = `${clean(task.taskId)} 最新回應觀測視窗 ${tpsLabel(task)}\n${clean(task.name)}\n模型 ${clean(task.model.provider)}/${clean(task.model.id)} ${row(task.thinking ?? "unknown")}\n${label(task.status)} ${elapsed(task)}${timeoutLabel(task)}\n目錄 ${clean(task.cwd)}\n工具 ${clean(task.currentTools.join(", "))}\n${task.capabilities ? `能力 ${clean(task.capabilities.reachable.join(", "))}\n` : ""}${task.sessionId ? `工作階段 ${clean(task.sessionId)}${task.sessionReusable === true ? " 可續用" : " 不可續用"}\n` : ""}${task.error ? `錯誤 ${clean(task.error)}\n` : ""}${requests.length ? `待回覆請求 ${requests.map((request) => `${clean(request.requestId)} ${clean(request.question)}`).join("\n")}\n` : ""}${task.state.status === "waiting_input" && task.state.dialogs.length ? `待回應對話 ${task.state.dialogs.map((dialog) => `${clean(dialog.id)} ${clean(dialog.title ?? dialog.method)}`).join("\n")}\n` : ""}\n${safeText(task.text, 65536)}${task.truncated ? "\n[內容已截短，完整資料請開啟 viewer]" : ""}`;
             } else {
               const schedule = item as ScheduleRecord;
-              text = `${schedule.scheduleId}\n${clean(schedule.name)}\n${label(schedule.state.status)}\n${clean(JSON.stringify(schedule.trigger))}\n下次 ${schedule.nextAt === null ? "無" : new Date(schedule.nextAt).toLocaleString("zh-TW")}\n${label("running")} ${schedule.activeTaskIds.map(shortId).join(", ")}\n${schedule.error ? `錯誤 ${clean(schedule.error)}\n` : ""}\n${schedule.history.slice(-20).map((run) => `${new Date(run.at).toLocaleString("zh-TW")} ${label(run.status)} ${run.taskId ? shortId(run.taskId) : ""}`).join("\n")}`;
+              text = `${clean(schedule.scheduleId)}\n${clean(schedule.name)}\n${label(schedule.state.status)}\n${clean(JSON.stringify(schedule.trigger))}\n下次 ${schedule.nextAt === null ? "無" : new Date(schedule.nextAt).toLocaleString("zh-TW")}\n${label("running")} ${schedule.activeTaskIds.map(clean).join(", ")}\n${schedule.error ? `錯誤 ${clean(schedule.error)}\n` : ""}\n${schedule.history.slice(-20).map((run) => `${new Date(run.at).toLocaleString("zh-TW")} ${label(run.status)} ${run.taskId ? row(run.taskId) : ""}`).join("\n")}`;
             }
             const wrapped = text.split(/[\n\u2028\u2029]/).flatMap((line) => wrapTextWithAnsi(line, usable));
             scroll = Math.min(scroll, Math.max(0, wrapped.length - rows));
@@ -181,7 +181,7 @@ export async function showFleetScreen(ctx: ExtensionContext, model: FleetUIModel
             const start = Math.max(0, index - Math.floor(rows / 2));
             for (let i = start; i < Math.min(list.length, start + rows); i++) {
               const entry = list[i];
-              const text = tab === "task" ? `${shortId((entry as TaskResult).taskId)} ${tpsLabel(entry as TaskResult)} ${row(entry.name)} ${row(label((entry as TaskResult).status))} ${elapsed(entry as TaskResult)}${timeoutLabel(entry as TaskResult)} ${row((entry as TaskResult).model.id)} ${row((entry as TaskResult).thinking ?? "unknown")}`
+              const text = tab === "task" ? `${shortId((entry as TaskResult).taskId)} ${row(entry.name)} ${row(label((entry as TaskResult).status))} ${elapsed(entry as TaskResult)}${timeoutLabel(entry as TaskResult)} ${row((entry as TaskResult).model.id)} ${row((entry as TaskResult).thinking ?? "unknown")} ${tpsLabel(entry as TaskResult)}`
                 : `${shortId((entry as ScheduleRecord).scheduleId)} ${row(entry.name)} ${row(label(entry.state.status))} ${(entry as ScheduleRecord).nextAt ? new Date((entry as ScheduleRecord).nextAt!).toLocaleString("zh-TW") : ""}`;
               lines.push((i === index ? theme.fg("accent", "> ") : "  ") + text);
             }
