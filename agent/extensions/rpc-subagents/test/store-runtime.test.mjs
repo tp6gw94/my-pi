@@ -104,9 +104,11 @@ test("CLI selection follows the current installed manifest, never a PATH shim or
 test("provider bootstrapping includes only present known providers and explicit project allowlist sources", async (t) => {
   const directory = await temporary(t); const agentDir = join(directory, "agent"); const extensionDir = join(agentDir, "extensions", "rpc-subagents");
   const deepinfra = join(agentDir, "extensions", "deepinfra-provider"); const arbitrary = join(agentDir, "extensions", "arbitrary-extension"); const additional = join(directory, "extra-provider.ts");
+  const claudeBridge = join(agentDir, "npm", "node_modules", "pi-claude-bridge"); const otherPackage = join(agentDir, "npm", "node_modules", "other-package");
   await mkdir(extensionDir, { recursive: true }); await mkdir(deepinfra); await mkdir(arbitrary); await writeFile(additional, "");
-  assert.deepEqual(providerExtensionPaths({ extensionDir, agentDir, cwd: "/project", config: { projects: { "/project": { providerSources: [additional] } } } }), [deepinfra, additional]);
-  assert.deepEqual(providerExtensionPaths({ extensionDir, agentDir, cwd: "/other", config: {} }), [deepinfra]);
+  await mkdir(claudeBridge, { recursive: true }); await mkdir(otherPackage);
+  assert.deepEqual(providerExtensionPaths({ extensionDir, agentDir, cwd: "/project", config: { projects: { "/project": { providerSources: [additional] } } } }), [deepinfra, claudeBridge, additional]);
+  assert.deepEqual(providerExtensionPaths({ extensionDir, agentDir, cwd: "/other", config: {} }), [deepinfra, claudeBridge]);
   assert.throws(() => providerExtensionPaths({ extensionDir, agentDir, cwd: "/project", config: { projects: { "/project": { providerSources: ["/missing"] } } } }), /does not exist/);
 });
 

@@ -360,7 +360,7 @@ EOF
 } >> "$TMP_POLICY"
 fi
 
-# Read-only ~/.claude beyond the shared agents/skills grants in the base profile.
+# Read/write ~/.claude for Claude Code (pi-claude-bridge) beyond the base profile grants.
 if [[ -f "$CLAUDE_ADDON" ]]; then
 {
   cat <<EOF

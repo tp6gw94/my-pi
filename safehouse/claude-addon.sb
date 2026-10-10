@@ -1,10 +1,11 @@
 ;; ---------------------------------------------------------------------------
 ;; Claude Code config addon (local)
-;; Grants read-only access to the whole ~/.claude directory.
-;; custom-pi.sb only allows ~/.claude/agents and ~/.claude/skills, so other
-;; Claude Code files (settings, commands, plugins, projects) fail with EPERM.
+;; Grants read/write access to the whole ~/.claude directory.
+;; custom-pi.sb only allows ~/.claude/agents and ~/.claude/skills read-only,
+;; but pi-claude-bridge runs Claude Code, which writes sessions, todos, and
+;; settings under ~/.claude.
 ;; ---------------------------------------------------------------------------
 
-(allow file-read*
+(allow file-read* file-write*
     (home-subpath "/.claude")
 )

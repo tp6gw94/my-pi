@@ -37,7 +37,8 @@ export async function loadLocalConfig(extensionDir) {
 }
 
 export function providerExtensionPaths({ extensionDir, agentDir, cwd, config }) {
-  const defaults = ["deepinfra-provider", "opencode-provider"].map((name) => join(agentDir, "extensions", name)).filter(existsSync);
+  const defaults = ["extensions/deepinfra-provider", "extensions/opencode-provider", "npm/node_modules/pi-claude-bridge"]
+    .map((name) => join(agentDir, name)).filter(existsSync);
   const additional = config.projects?.[cwd]?.providerSources ?? [];
   if (!Array.isArray(additional) || additional.some((item) => typeof item !== "string")) throw new Error("Project providerSources must be an array of explicit local paths");
   const paths = [...defaults, ...additional.map((source) => resolve(extensionDir, source))].map((source) => {
