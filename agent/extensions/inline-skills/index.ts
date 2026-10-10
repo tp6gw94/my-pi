@@ -1,8 +1,6 @@
-import { dirname } from "node:path";
-import { readFile } from "node:fs/promises";
+import { access, constants } from "node:fs/promises";
 import {
 	CustomEditor,
-	stripFrontmatter,
 	type ExtensionAPI,
 	type ExtensionContext,
 	type InputEvent,
@@ -196,7 +194,10 @@ class InlineSkillsEditor extends CustomEditor {
 		const lines = this.getLines();
 		const cursor = this.getCursor();
 		const text = lines.join("\n");
-		if (/^\s*[/!]/.test(text)) return null;
+		if (/^\s*[/!]/.test(text)) {
+			const nativeSkillName = /^\/skill:([^ \t\r\n]+) /.exec(text)?.[1];
+			if (!nativeSkillName || !this.catalog().has(nativeSkillName)) return null;
+		}
 		const pos = offsetFrom(lines, cursor.line, cursor.col);
 		if (pos > text.length) return null;
 
@@ -770,23 +771,28 @@ async function expandInput(
 
 	try {
 		const seen = new Set<string>();
-		const blocks: string[] = [];
+		if (event.text.startsWith("/skill:")) {
+			const nativeSkillSpace = event.text.indexOf(" ");
+			if (nativeSkillSpace !== -1) seen.add(event.text.slice("/skill:".length, nativeSkillSpace));
+		}
+		const entries: string[] = [];
 		for (const reference of ticket.references) {
 			if (seen.has(reference.name)) continue;
 			seen.add(reference.name);
-			const raw = await readFile(reference.path, "utf8");
+			await access(reference.path, constants.R_OK);
 			if (session.generation !== generation) return { action: "handled" };
-			const body = stripFrontmatter(raw).trim();
-			const escapedName = escapeAttribute(reference.name);
-			const escapedPath = escapeAttribute(reference.path);
-			const relativeBase = dirname(reference.path);
-			blocks.push(
-				`<skill name="${escapedName}" location="${escapedPath}">\nReferences are relative to ${relativeBase}.\n\n${body}\n</skill>`,
-			);
+			entries.push(`<skill name="${escapeAttribute(reference.name)}" location="${escapeAttribute(reference.path)}" />`);
 		}
 
 		if (session.generation !== generation) return { action: "handled" };
-		return { action: "transform", text: `${event.text}\n\n${blocks.join("\n\n")}` };
+		if (entries.length === 0) return { action: "continue" };
+		const block = [
+			"<selected_skills>",
+			"The user selected these skills for this message. Before acting, use the read tool to load each skill file, and resolve relative paths in a skill against its directory.",
+			...entries,
+			"</selected_skills>",
+		].join("\n");
+		return { action: "transform", text: `${event.text}\n\n${block}` };
 	} catch (error) {
 		if (session.generation !== generation) return { action: "handled" };
 		const message = error instanceof Error ? error.message : String(error);

@@ -12,6 +12,7 @@ KEYCHAIN_ADDON="${KEYCHAIN_ADDON:-$HOME/.pi/safehouse/keychain-addon.sb}"
 EMACS_ADDON="${EMACS_ADDON:-$HOME/.pi/safehouse/emacs-addon.sb}"
 PI_XDG_ADDON="${PI_XDG_ADDON:-$HOME/.pi/safehouse/pi-xdg-addon.sb}"
 DOCKER_ADDON="${DOCKER_ADDON:-$HOME/.pi/safehouse/docker-addon.sb}"
+CLAUDE_ADDON="${CLAUDE_ADDON:-$HOME/.pi/safehouse/claude-addon.sb}"
 
 if [[ ! -f "$BASE_PROFILE" ]]; then
   echo "Base profile not found: $BASE_PROFILE" >&2
@@ -356,6 +357,20 @@ if [[ -f "$PI_XDG_ADDON" ]]; then
 ;; ---------------------------------------------------------------------------
 EOF
   cat "$PI_XDG_ADDON"
+} >> "$TMP_POLICY"
+fi
+
+# Read-only ~/.claude beyond the shared agents/skills grants in the base profile.
+if [[ -f "$CLAUDE_ADDON" ]]; then
+{
+  cat <<EOF
+
+;; ---------------------------------------------------------------------------
+;; Claude Code config addon (loaded by default if the addon file exists)
+;; Source: ${CLAUDE_ADDON}
+;; ---------------------------------------------------------------------------
+EOF
+  cat "$CLAUDE_ADDON"
 } >> "$TMP_POLICY"
 fi
 

@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(HERE);
-const EVIDENCE = "/tmp/pi-inline-skills-20261008/evidence/implementation";
-const PI_ROOT = "/Users/todd/.local/share/mise/installs/node/24.16.0/lib/node_modules/@earendil-works/pi-coding-agent";
+const EVIDENCE = process.env.EVIDENCE ?? "/tmp/pi-inline-skills-20261008/evidence/implementation";
+const PI_ROOT = process.env.PI_ROOT ?? "/Users/todd/.local/share/mise/installs/npm-earendil-works-pi-coding-agent/1.1.0/lib/node_modules/@earendil-works/pi-coding-agent";
 const TUI_PATH = join(PI_ROOT, "node_modules/@earendil-works/pi-tui/dist/index.js");
 const PKG_PATH = join(PI_ROOT, "dist/index.js");
 const KEYBINDINGS_PATH = join(PI_ROOT, "dist/core/keybindings.js");
@@ -35,6 +35,9 @@ function check(name, condition, detail = "") {
 	failures.push(`${name}${detail ? ` :: ${detail}` : ""}`);
 	console.log(`not ok - ${name}${detail ? ` :: ${detail}` : ""}`);
 }
+
+const HOW_PATH = join(EVIDENCE, "fixtures/how/SKILL.md");
+const WHY_PATH = join(EVIDENCE, "fixtures/why/SKILL.md");
 
 function fixtures() {
 	mkdirSync(join(EVIDENCE, "fixtures/how"), { recursive: true });
@@ -185,10 +188,11 @@ const transformed = await expansionApp.runInput(submitted);
 check("selected references expand to transform", transformed.action === "transform", JSON.stringify(transformed));
 const text = transformed.text ?? "";
 check("expansion keeps original sentence", text.startsWith("請用 /skill:how 再 /skill:why"));
-check("expansion includes how body without frontmatter", text.includes("HOW-BODY") && !text.includes("name: how"));
-check("expansion includes why body", text.includes("WHY-BODY"));
-check("expansion uses dirname reference base", text.includes(`References are relative to ${join(EVIDENCE, "fixtures/how")}`));
-check("expansion appends exactly one block per selected skill", text.split("<skill name=").length - 1 === 2);
+check("expansion lists how skill path", text.includes(`<skill name="how" location="${HOW_PATH}" />`), text);
+check("expansion lists why skill path", text.includes(`<skill name="why" location="${WHY_PATH}" />`), text);
+check("expansion omits skill bodies", !text.includes("HOW-BODY") && !text.includes("WHY-BODY") && !text.includes("name: how"), text);
+check("expansion asks agent to read skill files", text.includes("<selected_skills>") && text.includes("use the read tool"), text);
+check("expansion appends exactly one entry per selected skill", text.split("<skill name=").length - 1 === 2);
 
 const dedupeApp = harness(commands);
 const dedupeEditor = dedupeApp.editor;
@@ -218,6 +222,99 @@ const leadingApp = harness(commands);
 const leadingEditor = leadingApp.editor;
 leadingEditor.setText("/how");
 check("leading slash stays native", !leadingEditor.render(120).some((line) => line.includes("how fixture")));
+
+const leadingNativeApp = harness(commands);
+const leadingNativeEditor = leadingNativeApp.editor;
+leadingNativeEditor.setText("/skill:how use /wh");
+const leadingNativePopup = leadingNativeEditor.render(120).some((line) => line.includes("why fixture"));
+check("known leading native skill permits later inline suggestions", leadingNativePopup);
+if (leadingNativePopup) {
+	leadingNativeEditor.handleInput("\t");
+	check("leading native skill accepts later skill without submitting", leadingNativeApp.submits.length === 0);
+	leadingNativeEditor.handleInput("\n");
+	leadingNativeEditor.handleInput("and /ho");
+	check("later inline suggestions work on another line", leadingNativeEditor.render(120).some((line) => line.includes("how fixture")));
+	leadingNativeEditor.handleInput("\t");
+	leadingNativeEditor.handleInput("\r");
+	const leadingNativeResult = await leadingNativeApp.runInput(leadingNativeApp.submits.at(-1));
+	const nativeSkills = ["how", "why"].map((name) => ({
+		name,
+		filePath: join(EVIDENCE, `fixtures/${name}/SKILL.md`),
+		baseDir: join(EVIDENCE, `fixtures/${name}`),
+	}));
+	const nativeExpanded = core.AgentSession.prototype._expandSkillCommand.call(
+		{ resourceLoader: { getSkills: () => ({ skills: nativeSkills }) } },
+		leadingNativeResult.text ?? "",
+	);
+	check(
+		"native expansion loads leading skill body once and lists later skill path",
+		nativeExpanded.split("HOW-BODY").length - 1 === 1 && !nativeExpanded.includes("WHY-BODY") && nativeExpanded.split(`location="${WHY_PATH}" />`).length - 1 === 1,
+		nativeExpanded,
+	);
+	leadingNativeEditor.setText("new draft /wh");
+	check("new draft shows inline suggestions after native skill", leadingNativeEditor.render(120).some((line) => line.includes("why fixture")));
+}
+
+const duplicateNativeApp = harness(commands);
+const duplicateNativeEditor = duplicateNativeApp.editor;
+duplicateNativeEditor.setText("/skill:how use /ho");
+const duplicateNativePopup = duplicateNativeEditor.render(120).some((line) => line.includes("how fixture"));
+check("repeated native skill shows later inline popup", duplicateNativePopup);
+if (duplicateNativePopup) {
+	duplicateNativeEditor.handleInput("\t");
+	duplicateNativeEditor.handleInput("and /ho");
+	check("repeated native skill shows duplicate inline popup", duplicateNativeEditor.render(120).some((line) => line.includes("how fixture")));
+	duplicateNativeEditor.handleInput("\t");
+	duplicateNativeEditor.handleInput("\r");
+	const duplicateNativeSubmitted = duplicateNativeApp.submits.at(-1) ?? "";
+	const duplicateNativeResult = await duplicateNativeApp.runInput(duplicateNativeSubmitted);
+	const duplicateNativeExpanded = core.AgentSession.prototype._expandSkillCommand.call(
+		{ resourceLoader: { getSkills: () => ({ skills: [{ name: "how", filePath: join(EVIDENCE, "fixtures/how/SKILL.md"), baseDir: join(EVIDENCE, "fixtures/how") }] }) } },
+		duplicateNativeSubmitted,
+	);
+	check(
+		"all inline duplicates leave native input untouched",
+		duplicateNativeResult.action === "continue" && duplicateNativeResult.text === undefined && duplicateNativeSubmitted === "/skill:how use /skill:how and /skill:how",
+		JSON.stringify({ result: duplicateNativeResult, submitted: duplicateNativeSubmitted }),
+	);
+	check(
+		"native expansion loads repeated leading skill once",
+		duplicateNativeExpanded.split("HOW-BODY").length - 1 === 1 && duplicateNativeExpanded.endsWith("use /skill:how and /skill:how"),
+		duplicateNativeExpanded,
+	);
+}
+
+const unreadableNativePath = join(EVIDENCE, "fixtures/missing/SKILL.md");
+rmSync(unreadableNativePath, { force: true });
+const unreadableNativeApp = harness(commands);
+const unreadableNativeEditor = unreadableNativeApp.editor;
+unreadableNativeEditor.setText("/skill:missing use /mis");
+const unreadableNativePopup = unreadableNativeEditor.render(120).some((line) => line.includes("missing fixture"));
+check("unreadable native skill permits matching inline popup", unreadableNativePopup);
+if (unreadableNativePopup) {
+	unreadableNativeEditor.handleInput("\t");
+	unreadableNativeEditor.handleInput("\r");
+}
+const unreadableNativeSubmitted = unreadableNativeApp.submits.at(-1) ?? "";
+const unreadableNativeResult = await unreadableNativeApp.runInput(unreadableNativeSubmitted);
+const nativeErrors = [];
+const nativeFallback = core.AgentSession.prototype._expandSkillCommand.call(
+	{
+		resourceLoader: { getSkills: () => ({ skills: [{ name: "missing", filePath: unreadableNativePath, baseDir: dirname(unreadableNativePath) }] }) },
+		_extensionRunner: { emitError: (error) => nativeErrors.push(error) },
+	},
+	unreadableNativeSubmitted,
+);
+check(
+	"unreadable native prefix stays Pi-owned",
+	unreadableNativeResult.action === "continue" && unreadableNativeResult.text === undefined && !unreadableNativeApp.notifications.some(([message]) => message.includes("讀取技能失敗")),
+	JSON.stringify({ result: unreadableNativeResult, notifications: unreadableNativeApp.notifications }),
+);
+check(
+	"Pi native unreadable-skill fallback preserves original input",
+	nativeFallback === unreadableNativeSubmitted && nativeErrors.some((error) => error.event === "skill_expansion"),
+	JSON.stringify({ nativeFallback, nativeErrors }),
+);
 
 const revokeApp = harness(commands);
 const revokeEditor = revokeApp.editor;
@@ -298,7 +395,7 @@ check(
 );
 midEditor.handleInput("\r");
 const midText = (await midApp.runInput(midApp.submits.at(-1))).text ?? "";
-check("shifted trailing reference still expands", midText.includes("HOW-BODY") && midText.includes("WHY-BODY"), midText);
+check("shifted trailing reference still expands", midText.includes(HOW_PATH) && midText.includes(WHY_PATH), midText);
 check("midcursor accept keeps surrounding text", midText.split("\n")[0] === "line1 /skill:why " && midText.split("\n")[1].startsWith("X /skill:how"), JSON.stringify(midText));
 
 const ctrlCApp = harness(commands);
@@ -325,7 +422,7 @@ followApp.editor.handleInput("\t");
 followApp.editor.handleInput("\x1b\r");
 check("follow-up capture matches expanded text", followApp.submits.at(-1) === "queue /skill:how", JSON.stringify(followApp.submits));
 const followResult = await followApp.runInput(followApp.submits.at(-1), "followUp");
-check("follow-up submission expands selected skill", (followResult.text ?? "").includes("HOW-BODY"), JSON.stringify(followResult));
+check("follow-up submission expands selected skill", (followResult.text ?? "").includes(HOW_PATH), JSON.stringify(followResult));
 
 const disabledApp = harness(commands);
 disabledApp.editor.setText("x /how");
@@ -359,7 +456,7 @@ historyRevoke.editor.handleInput("\x1b[A");
 check("up history replaces draft", historyRevoke.editor.getText() === "x /skill:how OLD-LITERAL", JSON.stringify(historyRevoke.editor.getText()));
 historyRevoke.editor.handleInput("\r");
 const historyRevokeResult = await historyRevoke.runInput(historyRevoke.submits.at(-1));
-check("up history revokes selected reference", historyRevokeResult.action === "continue" && !(historyRevokeResult.text ?? "").includes("HOW-BODY"), JSON.stringify(historyRevokeResult));
+check("up history revokes selected reference", historyRevokeResult.action === "continue" && !(historyRevokeResult.text ?? "").includes(HOW_PATH), JSON.stringify(historyRevokeResult));
 
 const sameTextHistory = harness(commands);
 sameTextHistory.editor.setText("x /how");
@@ -443,7 +540,7 @@ for (let index = 0; index < 16; index++) {
 	overflow.editor.handleInput("\r");
 }
 const overflowResult = await overflow.runInput(selectedText);
-check("queued selected submission is not evicted", overflowResult.action === "transform" && (overflowResult.text ?? "").includes("HOW-BODY"), JSON.stringify(overflowResult));
+check("queued selected submission is not evicted", overflowResult.action === "transform" && (overflowResult.text ?? "").includes(HOW_PATH), JSON.stringify(overflowResult));
 
 const pasteRestore = harness(commands);
 pasteRestore.editor.handleInput("\x1b[200~" + "PAD\n".repeat(12) + "\x1b[201~");
@@ -461,7 +558,7 @@ shutdownRead.editor.handleInput("\r");
 const shutdownReading = shutdownRead.runInput(shutdownRead.submits.at(-1));
 shutdownRead.handlers.session_shutdown({ type: "session_shutdown" }, {});
 const shutdownResult = await shutdownReading;
-check("shutdown invalidates in-flight transform", shutdownResult.action === "handled" && !(shutdownResult.text ?? "").includes("HOW-BODY"), JSON.stringify(shutdownResult));
+check("shutdown invalidates in-flight transform", shutdownResult.action === "handled" && !(shutdownResult.text ?? "").includes(HOW_PATH), JSON.stringify(shutdownResult));
 
 const clearedDraft = harness(commands);
 clearedDraft.editor.setText("x /missing");
@@ -487,7 +584,7 @@ newlineRef.editor.handleInput("\n");
 newlineRef.editor.handleInput("new line");
 newlineRef.editor.handleInput("\r");
 const newlineResult = await newlineRef.runInput(newlineRef.submits.at(-1));
-check("ctrl+j newline preserves selected reference", newlineResult.action === "transform" && (newlineResult.text ?? "").includes("HOW-BODY"), JSON.stringify(newlineResult));
+check("ctrl+j newline preserves selected reference", newlineResult.action === "transform" && (newlineResult.text ?? "").includes(HOW_PATH), JSON.stringify(newlineResult));
 
 const backslashSubmit = harness(commands);
 backslashSubmit.kb.setUserBindings({ "tui.input.submit": "shift+enter", "tui.input.newLine": "enter" });
@@ -507,7 +604,7 @@ if (nativeWouldSubmit) {
 	const backslashResult = await backslashSubmit.runInput(backslashText ?? "");
 	check(
 		"backslash submit expands selected reference",
-		backslashResult.action === "transform" && (backslashResult.text ?? "").includes("HOW-BODY") && !(backslashResult.text ?? "").includes("\\"),
+		backslashResult.action === "transform" && (backslashResult.text ?? "").includes(HOW_PATH) && !(backslashResult.text ?? "").includes("\\"),
 		JSON.stringify(backslashResult),
 	);
 }
@@ -551,7 +648,7 @@ try {
 	const pasteRetryText = pasteRetryResult.text ?? "";
 	check(
 		"unchanged paste retry loads chosen skill",
-		pasteRetryResult.action === "transform" && pasteRetryText.includes("MISSING-BODY") && pasteRetryText.includes("PAD"),
+		pasteRetryResult.action === "transform" && pasteRetryText.includes(missingFixture) && pasteRetryText.includes("PAD"),
 		JSON.stringify(pasteRetryResult),
 	);
 } finally {
@@ -678,6 +775,22 @@ await new Promise((resolve) => setTimeout(resolve, 10));
 const nativeCommand = harness(commands);
 nativeCommand.editor.setText("/model provider /how");
 check("leading command arguments remain native", !nativeCommand.editor.render(80).some((line) => line.includes("how fixture")));
+nativeCommand.editor.setText("/unknown /how");
+check("unknown leading command arguments remain native", !nativeCommand.editor.render(80).some((line) => line.includes("how fixture")));
+nativeCommand.editor.setText("/skill:not-installed /how");
+check("unknown leading native skill arguments remain native", !nativeCommand.editor.render(80).some((line) => line.includes("how fixture")));
+nativeCommand.editor.setText(" /skill:how /how");
+check("leading-whitespace native skill remains native", !nativeCommand.editor.render(80).some((line) => line.includes("how fixture")));
+nativeCommand.editor.setText("/skill:how\n/how");
+check("newline directly after native skill remains native", !nativeCommand.editor.render(80).some((line) => line.includes("how fixture")));
+nativeCommand.editor.setText("/skill:how\u00a0/how");
+const nonSpaceNativeText = nativeCommand.editor.getText();
+const nonSpaceNativeLines = nativeCommand.editor.render(80);
+check(
+	"non-space whitespace after native skill does not permit inline suggestions",
+	nonSpaceNativeText === "/skill:how\u00a0/how" && !nonSpaceNativeLines.some((line) => line.includes("how fixture")),
+	JSON.stringify({ text: nonSpaceNativeText, lines: nonSpaceNativeLines }),
+);
 nativeCommand.editor.setText("!printf /how");
 check("bash command arguments remain native", !nativeCommand.editor.render(80).some((line) => line.includes("how fixture")));
 

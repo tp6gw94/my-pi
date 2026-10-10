@@ -1,0 +1,11 @@
+{
+  "askClaude": {
+    "enabled": true
+  },
+  "provider": {
+    "plan": "pro",
+    "longContextExtraUsage": false,
+    "strictMcpConfig": true,
+    "pathToClaudeCodeExecutable": "/Users/todd/.local/share/mise/installs/node/24.19.0/bin/claude"
+  }
+}
