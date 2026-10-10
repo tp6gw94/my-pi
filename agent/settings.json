@@ -13,6 +13,10 @@
     "https://github.com/gsanhueza/pi-token-speed",
     "npm:pi-claude-bridge"
   ],
+  "skills": [
+    "-skills/make-bot-ui",
+    "-skills/poteto-mode"
+  ],
   "theme": "github-light",
   "modelThinkingLevels": {
     "xai/grok-4.6": "high",
