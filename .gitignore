@@ -21,3 +21,5 @@ tasks
 .DS_Store
 web-search-cache
 agent/extensions/rpc-fleet/data/*
+/agent/extensions/rpc-subagents/
+/agent/rpc-subagents/
