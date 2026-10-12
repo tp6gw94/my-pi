@@ -1,3 +1,4 @@
 - Write code, skills, AGENTS.md files, configs, and commits in English.
 - Write documents handed to the user, and all user communications, in Traditional Chinese.
 - Don't write any comments, code is single source of truth.
+- Do not perform speculative defensive programming or redundant verification. Every additional validation, safeguard, or verification step must be justified by an explicit requirement, an existing contract, or a concrete and realistic failure scenario.
