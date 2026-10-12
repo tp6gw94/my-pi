@@ -1,8 +1,8 @@
 {
   "lastChangelogVersion": "1.1.0",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6.1-sol",
-  "defaultThinkingLevel": "xhigh",
+  "defaultModel": "gpt-6-astra",
+  "defaultThinkingLevel": "low",
   "defaultTools": [
     "+codemode"
   ],
@@ -11,7 +11,8 @@
     "extensions/deepinfra-provider",
     "npm:pi-btw",
     "https://github.com/gsanhueza/pi-token-speed",
-    "npm:pi-claude-bridge"
+    "npm:pi-claude-bridge",
+    "git:github.com/tp6gw94/pi-extras"
   ],
   "skills": [
     "-skills/make-bot-ui",

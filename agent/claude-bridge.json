@@ -1,6 +1,6 @@
 {
   "askClaude": {
-    "enabled": true
+    "enabled": false
   },
   "provider": {
     "plan": "pro",
